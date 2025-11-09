@@ -1,0 +1,2 @@
+# This file ensures the creds/ directory is tracked by Git
+# The directory itself will contain credential files that are ignored

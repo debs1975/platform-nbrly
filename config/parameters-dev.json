@@ -1,0 +1,9 @@
+{
+  "projectName": "nbrly",
+  "environment": "dev",
+  "location": "eastus",
+  "adminEmail": "debashisg@astrapiaconsulting.com",
+  "databaseSkuName": "Standard_B1ms",
+  "containerAppsMaxReplicas": 10,
+  "enableHighAvailability": false
+}
