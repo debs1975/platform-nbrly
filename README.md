@@ -100,6 +100,7 @@ cd scripts
 ./03-deploy-compute.sh        # ~10 min - ACR, Container Apps
 ./04-deploy-data.sh           # ~15 min - PostgreSQL, Private Endpoint
 ./05-deploy-monitoring.sh     # ~5 min  - App Insights, Alerts
+./06-deploy-ssl.sh            # ~2 min  - Custom domain & SSL (optional)
 
 # 4. Verify deployment
 ./99-verify-deployment.sh
@@ -133,7 +134,7 @@ See [`sample-app/README.md`](sample-app/README.md) for detailed application depl
   - Container Apps, PostgreSQL, and storage capacity guidelines
   - Detailed cost optimization recommendations
 
-### � Authentication & Security
+### 🔒 Authentication & Security
 - **[Azure Authentication Setup](docs/azure-authentication-setup.md)** - Complete implementation guide for automated Azure CLI authentication
   - Service principal setup and credential management
   - Security best practices and file permissions
@@ -143,20 +144,35 @@ See [`sample-app/README.md`](sample-app/README.md) for detailed application depl
   - Step-by-step service principal creation
   - Credential file format and security requirements
   - Emergency credential rotation procedures
+- **[SSL/TLS Setup](docs/ssl-tls-setup.md)** - Custom domain and SSL certificate configuration
+  - Certificate requirements and acquisition
+  - DNS configuration (CNAME and TXT records)
+  - Deployment and verification procedures
+  - Certificate renewal and management
 
-### �🔧 Deployment Scripts
+### 🔧 Deployment Scripts
 All scripts located in [`scripts/`](scripts/) directory:
 - `01-deploy-networking.sh` - VNet, subnets, NSG, Private DNS zones
 - `02-deploy-security.sh` - Key Vault, User-Assigned Managed Identity, RBAC
 - `03-deploy-compute.sh` - ACR, Container Apps Environment
 - `04-deploy-data.sh` - PostgreSQL Flexible Server, Private Endpoint
-- `05-deploy-monitoring.sh` - Application Insights, Alert Rules, Diagnostics
-- `99-verify-deployment.sh` - Deployment verification and health checks
-- `helpers/azure-login.sh` - Automated Azure authentication helper
+- `05-deploy-monitoring.sh` - Application Insights, Log Analytics, Alerts
+- `06-deploy-ssl.sh` - Custom domain and SSL/TLS certificate configuration
+- `99-verify-deployment.sh` - Deployment verification and validation
 - `test-azure-login.sh` - Authentication setup testing
+
+**Helper Scripts** in [`scripts/helpers/`](scripts/helpers/):
+- `azure-login.sh` - Automated Azure authentication
+- `grant-sp-permissions.sh` - Grant service principal RBAC permissions
+- `upload-ssl-certificate.sh` - Upload SSL certificates to Key Vault
+- `create-resource-group.sh` - Resource group creation helper
+- `create-service-principal.sh` - Service principal creation helper
+- `logging.sh` - Logging utilities for scripts
 
 ### 📊 Configuration
 - [`config/parameters-dev.json`](config/parameters-dev.json) - Development environment parameters
+- [`config/parameters-staging.json`](config/parameters-staging.json) - Staging environment parameters
+- [`config/parameters-prod.json`](config/parameters-prod.json) - Production environment parameters
 
 ### 🔒 Repository Management
 - **[Git Ignore Strategy](.gitignore-guide.md)** - Comprehensive guide to version control exclusions
@@ -281,15 +297,19 @@ platform-nbrly/
 │   └── prompts/
 │       └── azure-infrastructure-requirements.prompt.md
 ├── config/
-│   └── parameters-dev.json              # Dev environment config
+│   ├── parameters-dev.json              # Dev environment config
+│   ├── parameters-staging.json          # Staging environment config
+│   └── parameters-prod.json             # Production environment config
 ├── docs/
-│   └── azure-infrastructure-design-dev.md  # Architecture documentation
+│   ├── azure-infrastructure-design-dev.md  # Architecture documentation
+│   └── ssl-tls-setup.md                 # SSL/TLS and custom domain setup
 ├── scripts/
 │   ├── 01-deploy-networking.sh          # Layer 1: Networking
 │   ├── 02-deploy-security.sh            # Layer 2: Security
 │   ├── 03-deploy-compute.sh             # Layer 3: Compute (ACR, CAE)
 │   ├── 04-deploy-data.sh                # Layer 4: Data
 │   ├── 05-deploy-monitoring.sh          # Layer 5: Monitoring
+│   ├── 06-deploy-ssl.sh                 # Layer 6: SSL/TLS & Custom Domain
 │   └── 99-verify-deployment.sh          # Verification
 ├── sample-app/                          # Sample FastAPI application
 │   ├── main.py                          # FastAPI app with health checks

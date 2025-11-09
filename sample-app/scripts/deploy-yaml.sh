@@ -1,10 +1,13 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # ============================================================================
-# Script: deploy.sh
-# Purpose: Build and deploy sample FastAPI app to Azure Container Apps
-# Usage: ./deploy.sh [environment]
+# Script: deploy-yaml.sh
+# Purpose: Build and deploy sample FastAPI app using YAML manifest
+# Usage: ./deploy-yaml.sh [environment]
+# ============================================================================
+# This script deploys the Container App using a YAML manifest instead of
+# CLI flags, providing better version control and declarative configuration.
 # ============================================================================
 
 ENVIRONMENT=${1:-dev}
@@ -13,16 +16,39 @@ ENVIRONMENT=${1:-dev}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INFRA_CONFIG_FILE="${SCRIPT_DIR}/../../config/parameters-${ENVIRONMENT}.json"
 APP_CONFIG_FILE="${SCRIPT_DIR}/../config/app-config-${ENVIRONMENT}.json"
+MANIFEST_TEMPLATE="${SCRIPT_DIR}/../manifests/containerapp.yaml"
+MANIFEST_OUTPUT="${SCRIPT_DIR}/../manifests/.generated/containerapp-${ENVIRONMENT}.yaml"
 
+echo ""
+echo "============================================================"
+echo "  Deploy Sample API - YAML-Based Deployment"
+echo "============================================================"
+echo ""
+
+# Validate configuration file
 if [ ! -f "$INFRA_CONFIG_FILE" ]; then
     echo "ERROR: Infrastructure configuration file not found: $INFRA_CONFIG_FILE"
-    echo "Usage: ./deploy.sh [dev|staging|prod]"
+    echo "Usage: ./deploy-yaml.sh [dev|staging|prod]"
     exit 1
 fi
 
+# Validate application configuration file
 if [ ! -f "$APP_CONFIG_FILE" ]; then
     echo "ERROR: Application configuration file not found: $APP_CONFIG_FILE"
-    echo "Usage: ./deploy.sh [dev|staging|prod]"
+    echo "Usage: ./deploy-yaml.sh [dev|staging|prod]"
+    exit 1
+fi
+
+# Validate manifest template
+if [ ! -f "$MANIFEST_TEMPLATE" ]; then
+    echo "ERROR: YAML manifest template not found: $MANIFEST_TEMPLATE"
+    exit 1
+fi
+
+# Check for jq
+if ! command -v jq &>/dev/null; then
+    echo "ERROR: 'jq' is required but not installed"
+    echo "Install with: brew install jq"
     exit 1
 fi
 
@@ -30,6 +56,7 @@ fi
 PROJECT_NAME=$(jq -r '.projectName' "$INFRA_CONFIG_FILE")
 ENV=$(jq -r '.environment' "$INFRA_CONFIG_FILE")
 LOCATION=$(jq -r '.location' "$INFRA_CONFIG_FILE")
+SUBSCRIPTION_ID=$(jq -r '.subscriptionId' "$INFRA_CONFIG_FILE")
 
 # Extract variables from application config
 IMAGE_TAG=$(jq -r '.container.image.tag' "$APP_CONFIG_FILE")
@@ -38,6 +65,7 @@ CONTAINER_MEMORY=$(jq -r '.container.resources.memory' "$APP_CONFIG_FILE")
 CONTAINER_PORT=$(jq -r '.container.port' "$APP_CONFIG_FILE")
 MIN_REPLICAS=$(jq -r '.scaling.minReplicas' "$APP_CONFIG_FILE")
 MAX_REPLICAS=$(jq -r '.scaling.maxReplicas' "$APP_CONFIG_FILE")
+HTTP_CONCURRENT_REQUESTS=$(jq -r '.scaling.rules.http.concurrentRequests' "$APP_CONFIG_FILE")
 APP_NAME_SUFFIX=$(jq -r '.application.name' "$APP_CONFIG_FILE")
 
 # ============================================================================
@@ -58,17 +86,15 @@ KV_NAME="${PROJECT_NAME}${ENV}eastuskv"
 IMAGE_NAME=$(jq -r '.container.image.name' "$APP_CONFIG_FILE")
 FULL_IMAGE_NAME="${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}"
 
-echo "=========================================="
-echo "Deploying Sample API to Azure Container Apps"
-echo "=========================================="
-echo "Environment: ${ENV}"
-echo "Resource Group: ${RG_NAME}"
-echo "Container App: ${APP_NAME}"
-echo "Image: ${FULL_IMAGE_NAME}"
-echo "=========================================="
+echo "Configuration:"
+echo "  Environment: ${ENV}"
+echo "  Resource Group: ${RG_NAME}"
+echo "  Container App: ${APP_NAME}"
+echo "  Image: ${FULL_IMAGE_NAME}"
+echo "  Manifest: ${MANIFEST_OUTPUT}"
+echo ""
 
 # Verify infrastructure exists
-echo ""
 echo "Verifying infrastructure..."
 
 if ! az group show --name "$RG_NAME" &>/dev/null; then
@@ -89,9 +115,14 @@ fi
 echo "Infrastructure verified"
 
 # Get Managed Identity details
+echo ""
+echo "Retrieving managed identity details..."
 UAMI_ID=$(az identity show --resource-group "$RG_NAME" --name "$UAMI_NAME" --query id -o tsv)
 UAMI_CLIENT_ID=$(az identity show --resource-group "$RG_NAME" --name "$UAMI_NAME" --query clientId -o tsv)
 
+echo "Managed Identity: ${UAMI_NAME}"
+
+# Build Docker image
 echo ""
 echo "Building Docker image..."
 docker build -t "$FULL_IMAGE_NAME" "${SCRIPT_DIR}/.."
@@ -106,6 +137,45 @@ docker push "$FULL_IMAGE_NAME"
 
 echo "Image pushed: $FULL_IMAGE_NAME"
 
+# Generate YAML manifest with variable substitution
+echo ""
+echo "Generating YAML manifest from template..."
+
+# Create output directory
+mkdir -p "$(dirname "$MANIFEST_OUTPUT")"
+
+# Create a temporary file for substitution
+TEMP_MANIFEST="${MANIFEST_OUTPUT}.tmp"
+cp "$MANIFEST_TEMPLATE" "$TEMP_MANIFEST"
+
+# Perform variable substitution using sed
+sed -i.bak \
+    -e "s|{{APP_NAME}}|${APP_NAME}|g" \
+    -e "s|{{CAE_NAME}}|${CAE_NAME}|g" \
+    -e "s|{{IMAGE_NAME}}|${FULL_IMAGE_NAME}|g" \
+    -e "s|{{UAMI_ID}}|${UAMI_ID}|g" \
+    -e "s|{{UAMI_CLIENT_ID}}|${UAMI_CLIENT_ID}|g" \
+    -e "s|{{ACR_SERVER}}|${ACR_NAME}.azurecr.io|g" \
+    -e "s|{{ENVIRONMENT}}|${ENV}|g" \
+    -e "s|{{PROJECT_NAME}}|${PROJECT_NAME}|g" \
+    -e "s|{{KV_NAME}}|${KV_NAME}|g" \
+    -e "s|{{MAX_REPLICAS}}|${MAX_REPLICAS}|g" \
+    -e "s|{{MIN_REPLICAS}}|${MIN_REPLICAS}|g" \
+    -e "s|{{CONTAINER_CPU}}|${CONTAINER_CPU}|g" \
+    -e "s|{{CONTAINER_MEMORY}}|${CONTAINER_MEMORY}|g" \
+    -e "s|{{CONTAINER_PORT}}|${CONTAINER_PORT}|g" \
+    -e "s|{{HTTP_CONCURRENT_REQUESTS}}|${HTTP_CONCURRENT_REQUESTS}|g" \
+    -e "s|{{SUBSCRIPTION_ID}}|${SUBSCRIPTION_ID}|g" \
+    -e "s|{{RESOURCE_GROUP}}|${RG_NAME}|g" \
+    -e "s|{{CREATED_DATE}}|$(date +%Y-%m-%d)|g" \
+    "$TEMP_MANIFEST"
+
+# Move the substituted file to final location
+mv "$TEMP_MANIFEST" "$MANIFEST_OUTPUT"
+rm -f "${TEMP_MANIFEST}.bak"
+
+echo "Manifest generated: ${MANIFEST_OUTPUT}"
+
 # Check if Container App exists
 APP_EXISTS=$(az containerapp show \
     --name "$APP_NAME" \
@@ -114,54 +184,39 @@ APP_EXISTS=$(az containerapp show \
 
 if [ -z "$APP_EXISTS" ]; then
     echo ""
-    echo "Creating new Container App..."
+    echo "Creating new Container App from YAML manifest..."
     
     az containerapp create \
         --resource-group "$RG_NAME" \
         --name "$APP_NAME" \
-        --environment "$CAE_NAME" \
-        --image "$FULL_IMAGE_NAME" \
-        --user-assigned "$UAMI_ID" \
-        --registry-server "${ACR_NAME}.azurecr.io" \
-        --registry-identity "$UAMI_ID" \
-        --target-port "$CONTAINER_PORT" \
-        --ingress external \
-        --cpu "$CONTAINER_CPU" \
-        --memory "$CONTAINER_MEMORY" \
-        --min-replicas "$MIN_REPLICAS" \
-        --max-replicas "$MAX_REPLICAS" \
-        --env-vars \
-            "ENVIRONMENT=${ENV}" \
-            "DATABASE_URL=secretref:postgres-connection-string" \
-            "SECRET_KEY=secretref:api-secret-key" \
-        --secrets \
-            "postgres-connection-string=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/postgres-connection-string,identityref:$UAMI_ID" \
-            "api-secret-key=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/api-secret-key,identityref:$UAMI_ID" \
-        --tags "Environment=${ENV}" "Project=${PROJECT_NAME}" "Application=${APP_NAME_SUFFIX}"
+        --yaml "$MANIFEST_OUTPUT"
     
     echo "Container App created"
 else
     echo ""
-    echo "Updating existing Container App..."
+    echo "Updating existing Container App from YAML manifest..."
     
     az containerapp update \
         --name "$APP_NAME" \
         --resource-group "$RG_NAME" \
-        --image "$FULL_IMAGE_NAME"
+        --yaml "$MANIFEST_OUTPUT"
     
     echo "Container App updated"
 fi
 
 # Get application URL
+echo ""
+echo "Retrieving application URL..."
 APP_FQDN=$(az containerapp show \
     --resource-group "$RG_NAME" \
     --name "$APP_NAME" \
     --query properties.configuration.ingress.fqdn -o tsv)
 
 echo ""
-echo "=========================================="
+echo "============================================================"
 echo "Deployment Complete!"
-echo "=========================================="
+echo "============================================================"
+echo ""
 echo "Container App: ${APP_NAME}"
 echo "Image: ${FULL_IMAGE_NAME}"
 echo "URL: https://${APP_FQDN}"
@@ -173,6 +228,14 @@ echo "  Liveness:   https://${APP_FQDN}/health/live"
 echo "  Info:       https://${APP_FQDN}/api/info"
 echo "  API Docs:   https://${APP_FQDN}/docs"
 echo ""
-echo "To view logs:"
+echo "Generated manifest:"
+echo "  ${MANIFEST_OUTPUT}"
+echo ""
+echo "View logs:"
 echo "  az containerapp logs show --name ${APP_NAME} --resource-group ${RG_NAME} --follow"
-echo "=========================================="
+echo ""
+echo "View manifest in Azure:"
+echo "  az containerapp show --name ${APP_NAME} --resource-group ${RG_NAME} -o yaml"
+echo ""
+echo "============================================================"
+echo ""

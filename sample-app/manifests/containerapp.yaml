@@ -1,0 +1,197 @@
+# ============================================================================
+# Azure Container App Manifest - Sample API
+# ============================================================================
+# This YAML file defines the complete configuration for deploying the sample
+# FastAPI application to Azure Container Apps.
+#
+# Usage:
+#   az containerapp create --resource-group <RG> --yaml containerapp.yaml
+#   az containerapp update --name <APP> --resource-group <RG> --yaml containerapp.yaml
+#
+# Variables to replace before deployment:
+#   {{APP_NAME}}              - Container App name (e.g., nbrly-dev-eastus-api-ca)
+#   {{CAE_NAME}}              - Container Apps Environment name
+#   {{IMAGE_NAME}}            - Full image name with registry and tag
+#   {{UAMI_ID}}               - User-assigned managed identity resource ID
+#   {{UAMI_CLIENT_ID}}        - Managed identity client ID
+#   {{ACR_SERVER}}            - ACR server URL (e.g., nbrlydeveastusacr.azurecr.io)
+#   {{ENVIRONMENT}}           - Environment name (dev, staging, prod)
+#   {{PROJECT_NAME}}          - Project name (nbrly)
+#   {{KV_NAME}}               - Key Vault name
+#   {{MAX_REPLICAS}}          - Maximum number of replicas
+# ============================================================================
+
+properties:
+  # ============================================================================
+  # Container Apps Environment Reference
+  # ============================================================================
+  environmentId: /subscriptions/{{SUBSCRIPTION_ID}}/resourceGroups/{{RESOURCE_GROUP}}/providers/Microsoft.App/managedEnvironments/{{CAE_NAME}}
+  
+  # ============================================================================
+  # Configuration
+  # ============================================================================
+  configuration:
+    # Active revisions mode (single = only one active revision)
+    activeRevisionsMode: single
+    
+    # Ingress configuration
+    ingress:
+      external: true          # Publicly accessible
+      targetPort: {{CONTAINER_PORT}}
+      transport: auto         # Auto-detect HTTP/HTTP2
+      allowInsecure: false    # Enforce HTTPS
+      traffic:
+        - latestRevision: true
+          weight: 100
+      # CORS settings (optional - uncomment if needed)
+      # corsPolicy:
+      #   allowedOrigins:
+      #     - "https://*.azurecontainerapps.io"
+      #   allowedMethods:
+      #     - GET
+      #     - POST
+      #     - PUT
+      #     - DELETE
+      #     - OPTIONS
+      #   allowedHeaders:
+      #     - "*"
+      #   allowCredentials: true
+    
+    # Registry configuration with managed identity
+    registries:
+      - server: {{ACR_SERVER}}
+        identity: {{UAMI_ID}}
+    
+    # Secrets from Key Vault
+    secrets:
+      - name: postgres-connection-string
+        keyVaultUrl: https://{{KV_NAME}}.vault.azure.net/secrets/postgres-connection-string
+        identity: {{UAMI_ID}}
+      
+      - name: api-secret-key
+        keyVaultUrl: https://{{KV_NAME}}.vault.azure.net/secrets/api-secret-key
+        identity: {{UAMI_ID}}
+  
+  # ============================================================================
+  # Template (Container and Scaling Configuration)
+  # ============================================================================
+  template:
+    # Container configuration
+    containers:
+      - name: api
+        image: {{IMAGE_NAME}}
+        resources:
+          cpu: {{CONTAINER_CPU}}
+          memory: {{CONTAINER_MEMORY}}
+        
+        # Environment variables
+        env:
+          - name: ENVIRONMENT
+            value: "{{ENVIRONMENT}}"
+          
+          - name: PROJECT_NAME
+            value: "{{PROJECT_NAME}}"
+          
+          # Database connection (from Key Vault secret)
+          - name: DATABASE_URL
+            secretRef: postgres-connection-string
+          
+          # API secret key (from Key Vault secret)
+          - name: SECRET_KEY
+            secretRef: api-secret-key
+          
+          # Azure-specific configurations
+          - name: AZURE_CLIENT_ID
+            value: "{{UAMI_CLIENT_ID}}"
+          
+          # Application settings
+          - name: LOG_LEVEL
+            value: "INFO"
+          
+          - name: PORT
+            value: "8000"
+        
+        # Health probes
+        probes:
+          # Liveness probe - restart container if this fails
+          - type: liveness
+            httpGet:
+              path: /health/live
+              port: {{CONTAINER_PORT}}
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          
+          # Readiness probe - don't send traffic if this fails
+          - type: readiness
+            httpGet:
+              path: /health/ready
+              port: {{CONTAINER_PORT}}
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 3
+          
+          # Startup probe - for slow-starting apps
+          - type: startup
+            httpGet:
+              path: /health
+              port: {{CONTAINER_PORT}}
+              scheme: HTTP
+            initialDelaySeconds: 0
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 10
+    
+    # Scaling configuration
+    scale:
+      minReplicas: {{MIN_REPLICAS}}
+      maxReplicas: {{MAX_REPLICAS}}
+      
+      # Auto-scaling rules
+      rules:
+        # HTTP request-based scaling
+        - name: http-rule
+          http:
+            metadata:
+              concurrentRequests: "{{HTTP_CONCURRENT_REQUESTS}}"
+        
+        # CPU-based scaling (optional)
+        # - name: cpu-rule
+        #   custom:
+        #     type: cpu
+        #     metadata:
+        #       type: Utilization
+        #       value: "70"              # Scale out when CPU > 70%
+        
+        # Memory-based scaling (optional)
+        # - name: memory-rule
+        #   custom:
+        #     type: memory
+        #     metadata:
+        #       type: Utilization
+        #       value: "80"              # Scale out when memory > 80%
+
+# ============================================================================
+# Identity Configuration
+# ============================================================================
+identity:
+  type: UserAssigned
+  userAssignedIdentities:
+    "{{UAMI_ID}}": {}
+
+# ============================================================================
+# Tags
+# ============================================================================
+tags:
+  Environment: "{{ENVIRONMENT}}"
+  Project: "{{PROJECT_NAME}}"
+  Application: "sample-api"
+  ManagedBy: "YAML-Deployment"
+  CreatedDate: "{{CREATED_DATE}}"

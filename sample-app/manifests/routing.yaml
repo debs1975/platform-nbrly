@@ -1,0 +1,44 @@
+# Container Apps Environment HTTP Routing Configuration
+# This file defines rule-based routing for multiple container apps
+# Docs: https://learn.microsoft.com/en-us/azure/container-apps/rule-based-routing
+
+routes:
+  # Route /app1 prefix to the main API container app
+  - match:
+      prefix: /app1
+    action:
+      prefixRewrite: /app1
+    target:
+      containerApp: {{APP_NAME}}
+  
+  # Example: Route /app2 prefix to a second container app
+  # Uncomment and configure when you have additional apps
+  # - match:
+  #     prefix: /app2
+  #   action:
+  #     prefixRewrite: /app2
+  #   target:
+  #     containerApp: {{PROJECT_NAME}}-{{ENV}}-eastus-app2-ca
+  
+  # Example: Route /api prefix to API service
+  # - match:
+  #     prefix: /api
+  #   action:
+  #     prefixRewrite: /
+  #   target:
+  #     containerApp: {{PROJECT_NAME}}-{{ENV}}-eastus-api-ca
+  
+  # Example: Route /admin prefix to admin service
+  # - match:
+  #     prefix: /admin
+  #   action:
+  #     prefixRewrite: /
+  #   target:
+  #     containerApp: {{PROJECT_NAME}}-{{ENV}}-eastus-admin-ca
+
+# Notes:
+# - All requests to the environment FQDN are matched against these rules
+# - Routes are evaluated in order (first match wins)
+# - prefixRewrite allows you to modify the path sent to the target app
+# - Container apps must exist in the same environment
+# - Container apps can have internal or external ingress

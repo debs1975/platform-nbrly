@@ -21,13 +21,58 @@ sample-app/
 ├── Dockerfile          # Multi-stage Docker build
 ├── .dockerignore       # Docker build exclusions
 ├── .gitignore          # Git exclusions
+├── config/
+│   ├── app-config-dev.json      # Dev environment config
+│   ├── app-config-staging.json  # Staging environment config
+│   ├── app-config-prod.json     # Production environment config
+│   └── README.md               # Configuration documentation
+├── manifests/
+│   ├── containerapp.yaml    # Container App YAML manifest template
+│   ├── routing.yaml         # HTTP routing configuration template
+│   └── .generated/          # Generated manifests (gitignored)
 ├── scripts/
-│   ├── deploy.sh       # Deployment automation script
+│   ├── deploy.sh            # CLI-based deployment script
+│   ├── deploy-yaml.sh       # YAML-based deployment script (recommended)
+│   ├── deploy-routing.sh    # HTTP routing deployment script
 │   └── setup-monitoring.sh  # Monitoring & alerts configuration
 ├── docs/
-│   └── monitoring-alerts.md  # Alert configurations and runbooks
+│   ├── configuration.md     # Configuration documentation
+│   ├── deployment.md        # Quick deployment reference
+│   ├── manifests.md         # YAML manifest documentation
+│   ├── monitoring-alerts.md # Alert configurations and runbooks
+│   └── routing.md           # HTTP routing configuration guide
 └── README.md           # This file
 ```
+
+## Configuration
+
+This application uses a dual-configuration approach:
+
+1. **Infrastructure Config** (`/config/parameters-{env}.json`)
+   - Azure resource names and IDs
+   - Networking configuration
+   - Key Vault, ACR, managed identity settings
+
+2. **Application Config** (`config/app-config-{env}.json`)
+   - Container resource allocations (CPU, memory)
+   - Scaling rules (min/max replicas, concurrent requests)
+   - Health probe settings
+   - Application environment variables
+   - Image tags and naming
+
+See `docs/configuration.md` for detailed configuration documentation.
+
+### Environment-Specific Settings
+
+| Setting | Dev | Staging | Prod |
+|---------|-----|---------|------|
+| CPU | 0.5 | 1.0 | 2.0 |
+| Memory | 1.0Gi | 2.0Gi | 4.0Gi |
+| Min Replicas | 0 (scale-to-zero) | 1 | 2 (HA) |
+| Max Replicas | 10 | 20 | 50 |
+| Image Tag | latest | latest | stable |
+
+To customize settings, edit the appropriate `config/app-config-{env}.json` file.
 
 ## Prerequisites
 
@@ -86,7 +131,47 @@ Access at: http://localhost:8000
 
 ## Deployment to Azure
 
-### Automated Deployment
+### Option 1: YAML-Based Deployment (Recommended)
+
+The YAML-based approach provides better version control, declarative configuration, and easier GitOps integration.
+
+```bash
+cd sample-app
+
+# Deploy to development environment
+./scripts/deploy-yaml.sh dev
+
+# Deploy to staging
+./scripts/deploy-yaml.sh staging
+
+# Deploy to production
+./scripts/deploy-yaml.sh prod
+```
+
+**What this does:**
+1. Verifies infrastructure exists
+2. Builds Docker image
+3. Pushes to Azure Container Registry
+4. Generates environment-specific YAML manifest from template
+5. Creates or updates Container App using `az containerapp create --yaml`
+
+**Benefits:**
+- ✅ **Version Control**: YAML manifest can be committed to Git
+- ✅ **Declarative**: Full container app configuration in one file
+- ✅ **Repeatable**: Same YAML produces consistent deployments
+- ✅ **GitOps Ready**: Easy integration with ArgoCD, Flux, etc.
+- ✅ **Review-Friendly**: Easier to review changes in PRs
+- ✅ **Template Support**: Single template for all environments
+
+**Generated Files:**
+- `manifests/containerapp.yaml` - Template with `{{variables}}`
+- `manifests/.generated/containerapp-dev.yaml` - Generated manifest for dev
+- `manifests/.generated/containerapp-staging.yaml` - Generated for staging
+- `manifests/.generated/containerapp-prod.yaml` - Generated for prod
+
+### Option 2: CLI-Based Deployment
+
+Traditional approach using Azure CLI flags:
 
 ```bash
 cd sample-app
@@ -97,16 +182,87 @@ cd sample-app
 # Deploy to staging
 ./scripts/deploy.sh staging
 
+# Deploy to staging
+./scripts/deploy.sh staging
+
 # Deploy to production
 ./scripts/deploy.sh prod
 ```
 
-This script:
+**What this does:**
 1. Verifies infrastructure exists
 2. Builds Docker image
 3. Pushes to Azure Container Registry
-4. Creates or updates Container App
-5. Configures secrets from Key Vault
+4. Creates or updates Container App using CLI flags
+
+### YAML Manifest Template
+
+The YAML manifest (`manifests/containerapp.yaml`) includes:
+
+**Container Configuration:**
+- Image reference with ACR integration
+- Resource limits (CPU: 0.5, Memory: 1.0Gi)
+- Environment variables (direct and from secrets)
+- User-assigned managed identity
+
+**Health Probes:**
+- Liveness probe: `/health/live` (restart if fails)
+- Readiness probe: `/health/ready` (no traffic if fails)
+- Startup probe: `/health` (for slow-starting apps)
+
+**Scaling:**
+- Min replicas: 0 (scale to zero)
+- Max replicas: Configurable via `parameters.json`
+- HTTP-based scaling: 10 concurrent requests
+- Optional CPU/Memory-based scaling rules
+
+**Security:**
+- Key Vault secret references
+- Managed identity for ACR pull
+- HTTPS-only ingress
+- CORS configuration (optional)
+
+**Example YAML variables:**
+```yaml
+properties:
+  environmentId: /subscriptions/.../managedEnvironments/{{CAE_NAME}}
+  configuration:
+    ingress:
+      external: true
+      targetPort: 8000
+    registries:
+      - server: {{ACR_SERVER}}
+        identity: {{UAMI_ID}}
+    secrets:
+      - name: postgres-connection-string
+        keyVaultUrl: https://{{KV_NAME}}.vault.azure.net/secrets/...
+        identity: {{UAMI_ID}}
+  template:
+    containers:
+      - name: api
+        image: {{IMAGE_NAME}}
+        resources:
+          cpu: 0.5
+          memory: 1.0Gi
+    scale:
+      minReplicas: 0
+      maxReplicas: {{MAX_REPLICAS}}
+```
+
+### Viewing Deployed YAML
+
+To see the actual deployed configuration:
+
+```bash
+# View current Container App as YAML
+az containerapp show \
+  --name nbrly-dev-eastus-api-ca \
+  --resource-group nbrly-dev-eastus-rg \
+  --output yaml > deployed-config.yaml
+
+# View generated manifest
+cat manifests/.generated/containerapp-dev.yaml
+```
 
 ### Configure Monitoring & Alerts
 
@@ -127,6 +283,23 @@ This creates:
 - Scale-to-zero monitoring
 
 See [docs/monitoring-alerts.md](docs/monitoring-alerts.md) for alert details and investigation runbooks.
+
+### Configure HTTP Routing (Optional)
+
+To route multiple container apps via a single environment FQDN:
+
+```bash
+cd sample-app
+
+# Deploy routing configuration
+./scripts/deploy-routing.sh dev
+```
+
+This enables path-based routing:
+- `https://{env-fqdn}/app1` → This container app
+- `https://{env-fqdn}/app2` → Another container app (when deployed)
+
+See [docs/routing.md](docs/routing.md) for routing configuration and multi-app deployment.
 
 ### Manual Deployment Steps
 
@@ -366,6 +539,17 @@ az monitor activity-log list \
 
 For detailed monitoring documentation, see [docs/monitoring-alerts.md](docs/monitoring-alerts.md).
 
+## Documentation
+
+- **[Configuration Guide](docs/configuration.md)** - Environment-specific app configuration
+- **[Deployment Guide](docs/deployment.md)** - Quick deployment reference
+- **[YAML Manifests](docs/manifests.md)** - Container App manifest documentation
+- **[HTTP Routing](docs/routing.md)** - Environment-level URL routing setup
+- **[Monitoring & Alerts](docs/monitoring-alerts.md)** - Alert configurations and runbooks
+
+For infrastructure-level documentation:
+- **[SSL/TLS Setup](../docs/ssl-tls-setup.md)** - Custom domain and SSL certificate configuration (infrastructure)
+
 ## Next Steps
 
 1. ✅ Deploy infrastructure (scripts/01-05)
@@ -383,4 +567,3 @@ For detailed monitoring documentation, see [docs/monitoring-alerts.md](docs/moni
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
 - [Uvicorn Documentation](https://www.uvicorn.org/)
 - [Docker Best Practices](https://docs.docker.com/develop/dev-best-practices/)
-- [Monitoring & Alerts Guide](docs/monitoring-alerts.md)

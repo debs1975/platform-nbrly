@@ -5,5 +5,11 @@
   "adminEmail": "debashisg@astrapiaconsulting.com",
   "databaseSkuName": "Standard_B1ms",
   "containerAppsMaxReplicas": 10,
-  "enableHighAvailability": false
+  "enableHighAvailability": false,
+  "customDomain": {
+    "enabled": true,
+    "domainName": "nbrly-dev.astrapia.io",
+    "certificateName": "astrapia-wildcard-cert",
+    "keyVaultCertificateName": "astrapia-wildcard"
+  }
 }

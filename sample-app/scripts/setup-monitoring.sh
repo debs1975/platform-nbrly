@@ -9,20 +9,32 @@ set -e
 
 ENVIRONMENT=${1:-dev}
 
-# Load infrastructure configuration
+# Load infrastructure and app configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${SCRIPT_DIR}/../../config/parameters-${ENVIRONMENT}.json"
+INFRA_CONFIG_FILE="${SCRIPT_DIR}/../../config/parameters-${ENVIRONMENT}.json"
+APP_CONFIG_FILE="${SCRIPT_DIR}/../config/app-config-${ENVIRONMENT}.json"
 
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "❌ Configuration file not found: $CONFIG_FILE"
+if [ ! -f "$INFRA_CONFIG_FILE" ]; then
+    echo "Configuration file not found: $INFRA_CONFIG_FILE"
     echo "Usage: ./setup-monitoring.sh [dev|staging|prod]"
     exit 1
 fi
 
-# Extract variables from config
-PROJECT_NAME=$(jq -r '.projectName' "$CONFIG_FILE")
-ENV=$(jq -r '.environment' "$CONFIG_FILE")
-ADMIN_EMAIL=$(jq -r '.adminEmail' "$CONFIG_FILE")
+if [ ! -f "$APP_CONFIG_FILE" ]; then
+    echo "App configuration file not found: $APP_CONFIG_FILE"
+    echo "Usage: ./setup-monitoring.sh [dev|staging|prod]"
+    exit 1
+fi
+
+# Extract variables from infrastructure config
+PROJECT_NAME=$(jq -r '.projectName' "$INFRA_CONFIG_FILE")
+ENV=$(jq -r '.environment' "$INFRA_CONFIG_FILE")
+ADMIN_EMAIL=$(jq -r '.adminEmail' "$INFRA_CONFIG_FILE")
+
+# Extract variables from app config
+APP_NAME_SUFFIX=$(jq -r '.containerApp.nameSuffix' "$APP_CONFIG_FILE")
+CONTAINER_CPU=$(jq -r '.containerApp.resources.cpu' "$APP_CONFIG_FILE")
+CONTAINER_MEMORY=$(jq -r '.containerApp.resources.memory' "$APP_CONFIG_FILE")
 
 # ============================================================================
 # Azure Authentication
@@ -32,9 +44,16 @@ azure_login "$ENV"
 
 # Construct resource names
 RG_NAME="${PROJECT_NAME}-${ENV}-eastus-rg"
-APP_NAME="${PROJECT_NAME}-${ENV}-eastus-api-ca"
+APP_NAME="${PROJECT_NAME}-${ENV}-eastus-${APP_NAME_SUFFIX}"
 ACTION_GROUP_NAME="${PROJECT_NAME}-${ENV}-eastus-ag"
 AI_NAME="${PROJECT_NAME}-${ENV}-eastus-ai"
+
+# Calculate threshold values based on config
+CPU_CORES=$(echo "$CONTAINER_CPU" | sed 's/[^0-9.]//g')
+CPU_THRESHOLD_NANO=$(echo "$CPU_CORES * 0.8 * 1000000000" | bc | cut -d. -f1)
+
+MEMORY_GB=$(echo "$CONTAINER_MEMORY" | sed 's/Gi//g')
+MEMORY_THRESHOLD_BYTES=$(echo "$MEMORY_GB * 1024 * 1024 * 1024 * 0.85" | bc | cut -d. -f1)
 
 echo "=========================================="
 echo "Configuring Monitoring for Container App"
@@ -141,11 +160,11 @@ az monitor metrics alert create \
     --name "${APP_NAME}-high-cpu" \
     --resource-group "$RG_NAME" \
     --scopes "$CONTAINER_APP_ID" \
-    --condition "avg UsageNanoCores > 400000000" \
+    --condition "avg UsageNanoCores > ${CPU_THRESHOLD_NANO}" \
     --window-size 5m \
     --evaluation-frequency 1m \
     --action "$ACTION_GROUP_ID" \
-    --description "Alert when CPU usage exceeds 80% (0.4 cores of 0.5 allocated)" \
+    --description "Alert when CPU usage exceeds 80% (${CPU_CORES} cores allocated)" \
     --severity 3 \
     --tags "Environment=${ENV}" "Project=${PROJECT_NAME}" "Application=sample-api" \
     --output none 2>/dev/null || echo "  (Alert may already exist)"
@@ -158,11 +177,11 @@ az monitor metrics alert create \
     --name "${APP_NAME}-high-memory" \
     --resource-group "$RG_NAME" \
     --scopes "$CONTAINER_APP_ID" \
-    --condition "avg WorkingSetBytes > 912680960" \
+    --condition "avg WorkingSetBytes > ${MEMORY_THRESHOLD_BYTES}" \
     --window-size 5m \
     --evaluation-frequency 1m \
     --action "$ACTION_GROUP_ID" \
-    --description "Alert when memory usage exceeds 85% (870 MB of 1 GB allocated)" \
+    --description "Alert when memory usage exceeds 85% (${MEMORY_GB}GB allocated)" \
     --severity 2 \
     --tags "Environment=${ENV}" "Project=${PROJECT_NAME}" "Application=sample-api" \
     --output none 2>/dev/null || echo "  (Alert may already exist)"

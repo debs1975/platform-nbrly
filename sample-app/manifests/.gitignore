@@ -1,0 +1,15 @@
+# Ignore all generated manifests
+.generated/
+*.generated.yaml
+*-dev.yaml
+*-staging.yaml
+*-prod.yaml
+
+# Keep the templates
+!containerapp.yaml
+!routing.yaml
+
+# Backup files
+*.bak
+*.backup
+*.tmp
