@@ -3,176 +3,96 @@ set -e
 
 # ============================================================================
 # Script: deploy.sh
-# Purpose: Build and deploy sample FastAPI app to Azure Container Apps
-# Usage: ./deploy.sh [environment]
+# Purpose: Complete deployment automation script that orchestrates the build,
+#          push, and deployment process for containerized applications to 
+#          Azure Container Apps
+# 
+# Description:
+#   This is a convenience wrapper script that automates the complete deployment
+#   workflow by sequentially calling build-push.sh and deploy-app.sh scripts.
+#   It handles Docker image building, pushing to Azure Container Registry,
+#   and deploying/updating the container application.
+#
+# Usage: 
+#   ./deploy.sh [environment] [tag] [app]
+#
+# Parameters:
+#   environment  - Target deployment environment (default: 'dev')
+#                  Examples: dev, staging, prod
+#   tag         - Custom image tag (optional)
+#                 If not provided, auto-generated tag will be used
+#   app         - Application name (default: 'app')
+#                 Used for image naming and container app identification
+#
+# Examples:
+#   ./deploy.sh                           # Deploy 'app' to 'dev' with auto tag
+#   ./deploy.sh prod                      # Deploy 'app' to 'prod' with auto tag
+#   ./deploy.sh staging v1.2.3           # Deploy 'app' to 'staging' with tag 'v1.2.3'
+#   ./deploy.sh dev latest my-service     # Deploy 'my-service' to 'dev' with tag 'latest'
+#
+# Dependencies:
+#   - build-push.sh: Must exist in same directory for building and pushing images
+#   - deploy-app.sh: Must exist in same directory for container app deployment
+#   - Azure CLI configured with appropriate permissions
+#   - Docker installed and configured
+#
+# Workflow:
+#   1. Validates input parameters and sets defaults
+#   2. Calls build-push.sh to build Docker image and push to ACR
+#   3. Calls deploy-app.sh to deploy/update the container app
+#   4. Provides progress feedback and completion status
+#
+# Exit Codes:
+#   0 - Success
+#   1 - Error (script fails fast with 'set -e')
+#
+# Notes:
+#   - Script uses 'set -e' for fail-fast behavior
+#   - Each app gets its own separate Docker image
+#   - Custom tags are propagated to both build and deploy phases
+#   - Script provides detailed progress output for monitoring
 # ============================================================================
 
 ENVIRONMENT=${1:-dev}
+CUSTOM_TAG=${2:-}
+APP_NAME=${3:-app}
 
-# Load infrastructure and application configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INFRA_CONFIG_FILE="${SCRIPT_DIR}/../../config/parameters-${ENVIRONMENT}.json"
-APP_CONFIG_FILE="${SCRIPT_DIR}/../config/app-config-${ENVIRONMENT}.json"
-
-if [ ! -f "$INFRA_CONFIG_FILE" ]; then
-    echo "ERROR: Infrastructure configuration file not found: $INFRA_CONFIG_FILE"
-    echo "Usage: ./deploy.sh [dev|staging|prod]"
-    exit 1
-fi
-
-if [ ! -f "$APP_CONFIG_FILE" ]; then
-    echo "ERROR: Application configuration file not found: $APP_CONFIG_FILE"
-    echo "Usage: ./deploy.sh [dev|staging|prod]"
-    exit 1
-fi
-
-# Extract variables from infrastructure config
-PROJECT_NAME=$(jq -r '.projectName' "$INFRA_CONFIG_FILE")
-ENV=$(jq -r '.environment' "$INFRA_CONFIG_FILE")
-LOCATION=$(jq -r '.location' "$INFRA_CONFIG_FILE")
-
-# Extract variables from application config
-IMAGE_TAG=$(jq -r '.container.image.tag' "$APP_CONFIG_FILE")
-CONTAINER_CPU=$(jq -r '.container.resources.cpu' "$APP_CONFIG_FILE")
-CONTAINER_MEMORY=$(jq -r '.container.resources.memory' "$APP_CONFIG_FILE")
-CONTAINER_PORT=$(jq -r '.container.port' "$APP_CONFIG_FILE")
-MIN_REPLICAS=$(jq -r '.scaling.minReplicas' "$APP_CONFIG_FILE")
-MAX_REPLICAS=$(jq -r '.scaling.maxReplicas' "$APP_CONFIG_FILE")
-APP_NAME_SUFFIX=$(jq -r '.application.name' "$APP_CONFIG_FILE")
-
-# ============================================================================
-# Azure Authentication
-# ============================================================================
-source "${SCRIPT_DIR}/../../scripts/helpers/azure-login.sh"
-azure_login "$ENV"
-
-# Construct resource names (lowercase)
-RG_NAME="${PROJECT_NAME}-${ENV}-eastus-rg"
-ACR_NAME="${PROJECT_NAME}${ENV}eastusacr"
-CAE_NAME="${PROJECT_NAME}-${ENV}-eastus-cae"
-APP_NAME="${PROJECT_NAME}-${ENV}-eastus-${APP_NAME_SUFFIX}-ca"
-UAMI_NAME="${PROJECT_NAME}-${ENV}-eastus-uami"
-KV_NAME="${PROJECT_NAME}${ENV}eastuskv"
-
-# Application configuration
-IMAGE_NAME=$(jq -r '.container.image.name' "$APP_CONFIG_FILE")
-FULL_IMAGE_NAME="${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}"
 
 echo "=========================================="
-echo "Deploying Sample API to Azure Container Apps"
+echo "Complete Deployment Workflow"
 echo "=========================================="
-echo "Environment: ${ENV}"
-echo "Resource Group: ${RG_NAME}"
-echo "Container App: ${APP_NAME}"
-echo "Image: ${FULL_IMAGE_NAME}"
+echo "Environment: ${ENVIRONMENT}"
+echo "Application: ${APP_NAME}"
+if [ -n "$CUSTOM_TAG" ]; then
+    echo "Custom Tag:  ${CUSTOM_TAG}"
+fi
+echo ""
+echo "This script will:"
+echo "  1. Build Docker image (${APP_NAME})"
+echo "  2. Push to Azure Container Registry"
+echo "  3. Deploy/Update Container App"
 echo "=========================================="
 
-# Verify infrastructure exists
+# Step 1: Build and push image (separate image per app)
 echo ""
-echo "Verifying infrastructure..."
-
-if ! az group show --name "$RG_NAME" &>/dev/null; then
-    echo "ERROR: Resource group not found. Run infrastructure deployment scripts first."
-    exit 1
-fi
-
-if ! az acr show --name "$ACR_NAME" --resource-group "$RG_NAME" &>/dev/null; then
-    echo "ERROR: Container Registry not found. Run ./scripts/03-deploy-compute.sh first."
-    exit 1
-fi
-
-if ! az containerapp env show --name "$CAE_NAME" --resource-group "$RG_NAME" &>/dev/null; then
-    echo "ERROR: Container Apps Environment not found. Run ./scripts/03-deploy-compute.sh first."
-    exit 1
-fi
-
-echo "Infrastructure verified"
-
-# Get Managed Identity details
-UAMI_ID=$(az identity show --resource-group "$RG_NAME" --name "$UAMI_NAME" --query id -o tsv)
-UAMI_CLIENT_ID=$(az identity show --resource-group "$RG_NAME" --name "$UAMI_NAME" --query clientId -o tsv)
-
-echo ""
-echo "Building Docker image..."
-docker build -t "$FULL_IMAGE_NAME" "${SCRIPT_DIR}/.."
-
-echo ""
-echo "Logging into Azure Container Registry..."
-az acr login --name "$ACR_NAME"
-
-echo ""
-echo "Pushing image to ACR..."
-docker push "$FULL_IMAGE_NAME"
-
-echo "Image pushed: $FULL_IMAGE_NAME"
-
-# Check if Container App exists
-APP_EXISTS=$(az containerapp show \
-    --name "$APP_NAME" \
-    --resource-group "$RG_NAME" \
-    --query name -o tsv 2>/dev/null || echo "")
-
-if [ -z "$APP_EXISTS" ]; then
-    echo ""
-    echo "Creating new Container App..."
-    
-    az containerapp create \
-        --resource-group "$RG_NAME" \
-        --name "$APP_NAME" \
-        --environment "$CAE_NAME" \
-        --image "$FULL_IMAGE_NAME" \
-        --user-assigned "$UAMI_ID" \
-        --registry-server "${ACR_NAME}.azurecr.io" \
-        --registry-identity "$UAMI_ID" \
-        --target-port "$CONTAINER_PORT" \
-        --ingress external \
-        --cpu "$CONTAINER_CPU" \
-        --memory "$CONTAINER_MEMORY" \
-        --min-replicas "$MIN_REPLICAS" \
-        --max-replicas "$MAX_REPLICAS" \
-        --env-vars \
-            "ENVIRONMENT=${ENV}" \
-            "DATABASE_URL=secretref:postgres-connection-string" \
-            "SECRET_KEY=secretref:api-secret-key" \
-        --secrets \
-            "postgres-connection-string=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/postgres-connection-string,identityref:$UAMI_ID" \
-            "api-secret-key=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/api-secret-key,identityref:$UAMI_ID" \
-        --tags "Environment=${ENV}" "Project=${PROJECT_NAME}" "Application=${APP_NAME_SUFFIX}"
-    
-    echo "Container App created"
+echo "=== Step 1/2: Building and Pushing Image ==="
+if [ -n "$CUSTOM_TAG" ]; then
+    "${SCRIPT_DIR}/build-push.sh" "$ENVIRONMENT" "$CUSTOM_TAG" "$APP_NAME"
 else
-    echo ""
-    echo "Updating existing Container App..."
-    
-    az containerapp update \
-        --name "$APP_NAME" \
-        --resource-group "$RG_NAME" \
-        --image "$FULL_IMAGE_NAME"
-    
-    echo "Container App updated"
+    "${SCRIPT_DIR}/build-push.sh" "$ENVIRONMENT" "" "$APP_NAME"
 fi
 
-# Get application URL
-APP_FQDN=$(az containerapp show \
-    --resource-group "$RG_NAME" \
-    --name "$APP_NAME" \
-    --query properties.configuration.ingress.fqdn -o tsv)
+# Step 2: Deploy container app
+echo ""
+echo "=== Step 2/2: Deploying Container App ==="
+if [ -n "$CUSTOM_TAG" ]; then
+    "${SCRIPT_DIR}/deploy-app.sh" "$ENVIRONMENT" "$CUSTOM_TAG" "$APP_NAME"
+else
+    "${SCRIPT_DIR}/deploy-app.sh" "$ENVIRONMENT" "" "$APP_NAME"
+fi
 
 echo ""
 echo "=========================================="
-echo "Deployment Complete!"
-echo "=========================================="
-echo "Container App: ${APP_NAME}"
-echo "Image: ${FULL_IMAGE_NAME}"
-echo "URL: https://${APP_FQDN}"
-echo ""
-echo "Test endpoints:"
-echo "  Health:     https://${APP_FQDN}/health"
-echo "  Readiness:  https://${APP_FQDN}/health/ready"
-echo "  Liveness:   https://${APP_FQDN}/health/live"
-echo "  Info:       https://${APP_FQDN}/api/info"
-echo "  API Docs:   https://${APP_FQDN}/docs"
-echo ""
-echo "To view logs:"
-echo "  az containerapp logs show --name ${APP_NAME} --resource-group ${RG_NAME} --follow"
+echo "Complete Deployment Finished!"
 echo "=========================================="

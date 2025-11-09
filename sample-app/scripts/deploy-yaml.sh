@@ -14,7 +14,7 @@ ENVIRONMENT=${1:-dev}
 
 # Load infrastructure and application configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INFRA_CONFIG_FILE="${SCRIPT_DIR}/../../config/parameters-${ENVIRONMENT}.json"
+INFRA_CONFIG_FILE="${SCRIPT_DIR}/../../iac-cli/config/parameters-${ENVIRONMENT}.json"
 APP_CONFIG_FILE="${SCRIPT_DIR}/../config/app-config-${ENVIRONMENT}.json"
 MANIFEST_TEMPLATE="${SCRIPT_DIR}/../manifests/containerapp.yaml"
 MANIFEST_OUTPUT="${SCRIPT_DIR}/../manifests/.generated/containerapp-${ENVIRONMENT}.yaml"
@@ -68,10 +68,29 @@ MAX_REPLICAS=$(jq -r '.scaling.maxReplicas' "$APP_CONFIG_FILE")
 HTTP_CONCURRENT_REQUESTS=$(jq -r '.scaling.rules.http.concurrentRequests' "$APP_CONFIG_FILE")
 APP_NAME_SUFFIX=$(jq -r '.application.name' "$APP_CONFIG_FILE")
 
+# Extract health probe configuration
+LIVENESS_PROBE_PATH=$(jq -r '.healthProbes.liveness.path' "$APP_CONFIG_FILE")
+LIVENESS_INITIAL_DELAY=$(jq -r '.healthProbes.liveness.initialDelaySeconds' "$APP_CONFIG_FILE")
+LIVENESS_PERIOD=$(jq -r '.healthProbes.liveness.periodSeconds' "$APP_CONFIG_FILE")
+LIVENESS_TIMEOUT=$(jq -r '.healthProbes.liveness.timeoutSeconds' "$APP_CONFIG_FILE")
+LIVENESS_FAILURE_THRESHOLD=$(jq -r '.healthProbes.liveness.failureThreshold' "$APP_CONFIG_FILE")
+
+READINESS_PROBE_PATH=$(jq -r '.healthProbes.readiness.path' "$APP_CONFIG_FILE")
+READINESS_INITIAL_DELAY=$(jq -r '.healthProbes.readiness.initialDelaySeconds' "$APP_CONFIG_FILE")
+READINESS_PERIOD=$(jq -r '.healthProbes.readiness.periodSeconds' "$APP_CONFIG_FILE")
+READINESS_TIMEOUT=$(jq -r '.healthProbes.readiness.timeoutSeconds' "$APP_CONFIG_FILE")
+READINESS_FAILURE_THRESHOLD=$(jq -r '.healthProbes.readiness.failureThreshold' "$APP_CONFIG_FILE")
+
+STARTUP_PROBE_PATH=$(jq -r '.healthProbes.startup.path' "$APP_CONFIG_FILE")
+STARTUP_INITIAL_DELAY=$(jq -r '.healthProbes.startup.initialDelaySeconds' "$APP_CONFIG_FILE")
+STARTUP_PERIOD=$(jq -r '.healthProbes.startup.periodSeconds' "$APP_CONFIG_FILE")
+STARTUP_TIMEOUT=$(jq -r '.healthProbes.startup.timeoutSeconds' "$APP_CONFIG_FILE")
+STARTUP_FAILURE_THRESHOLD=$(jq -r '.healthProbes.startup.failureThreshold' "$APP_CONFIG_FILE")
+
 # ============================================================================
 # Azure Authentication
 # ============================================================================
-source "${SCRIPT_DIR}/../../scripts/helpers/azure-login.sh"
+source "${SCRIPT_DIR}/../../iac-cli/scripts/helpers/azure-login.sh"
 azure_login "$ENV"
 
 # Construct resource names (lowercase)
@@ -103,12 +122,12 @@ if ! az group show --name "$RG_NAME" &>/dev/null; then
 fi
 
 if ! az acr show --name "$ACR_NAME" --resource-group "$RG_NAME" &>/dev/null; then
-    echo "ERROR: Container Registry not found. Run ./scripts/03-deploy-compute.sh first."
+    echo "ERROR: Container Registry not found. Run ./iac-cli/scripts/03-deploy-compute.sh first."
     exit 1
 fi
 
 if ! az containerapp env show --name "$CAE_NAME" --resource-group "$RG_NAME" &>/dev/null; then
-    echo "ERROR: Container Apps Environment not found. Run ./scripts/03-deploy-compute.sh first."
+    echo "ERROR: Container Apps Environment not found. Run ./iac-cli/scripts/03-deploy-compute.sh first."
     exit 1
 fi
 
@@ -165,6 +184,21 @@ sed -i.bak \
     -e "s|{{CONTAINER_MEMORY}}|${CONTAINER_MEMORY}|g" \
     -e "s|{{CONTAINER_PORT}}|${CONTAINER_PORT}|g" \
     -e "s|{{HTTP_CONCURRENT_REQUESTS}}|${HTTP_CONCURRENT_REQUESTS}|g" \
+    -e "s|{{LIVENESS_PROBE_PATH}}|${LIVENESS_PROBE_PATH}|g" \
+    -e "s|{{LIVENESS_INITIAL_DELAY}}|${LIVENESS_INITIAL_DELAY}|g" \
+    -e "s|{{LIVENESS_PERIOD}}|${LIVENESS_PERIOD}|g" \
+    -e "s|{{LIVENESS_TIMEOUT}}|${LIVENESS_TIMEOUT}|g" \
+    -e "s|{{LIVENESS_FAILURE_THRESHOLD}}|${LIVENESS_FAILURE_THRESHOLD}|g" \
+    -e "s|{{READINESS_PROBE_PATH}}|${READINESS_PROBE_PATH}|g" \
+    -e "s|{{READINESS_INITIAL_DELAY}}|${READINESS_INITIAL_DELAY}|g" \
+    -e "s|{{READINESS_PERIOD}}|${READINESS_PERIOD}|g" \
+    -e "s|{{READINESS_TIMEOUT}}|${READINESS_TIMEOUT}|g" \
+    -e "s|{{READINESS_FAILURE_THRESHOLD}}|${READINESS_FAILURE_THRESHOLD}|g" \
+    -e "s|{{STARTUP_PROBE_PATH}}|${STARTUP_PROBE_PATH}|g" \
+    -e "s|{{STARTUP_INITIAL_DELAY}}|${STARTUP_INITIAL_DELAY}|g" \
+    -e "s|{{STARTUP_PERIOD}}|${STARTUP_PERIOD}|g" \
+    -e "s|{{STARTUP_TIMEOUT}}|${STARTUP_TIMEOUT}|g" \
+    -e "s|{{STARTUP_FAILURE_THRESHOLD}}|${STARTUP_FAILURE_THRESHOLD}|g" \
     -e "s|{{SUBSCRIPTION_ID}}|${SUBSCRIPTION_ID}|g" \
     -e "s|{{RESOURCE_GROUP}}|${RG_NAME}|g" \
     -e "s|{{CREATED_DATE}}|$(date +%Y-%m-%d)|g" \
@@ -222,11 +256,11 @@ echo "Image: ${FULL_IMAGE_NAME}"
 echo "URL: https://${APP_FQDN}"
 echo ""
 echo "Test endpoints:"
-echo "  Health:     https://${APP_FQDN}/health"
-echo "  Readiness:  https://${APP_FQDN}/health/ready"
-echo "  Liveness:   https://${APP_FQDN}/health/live"
-echo "  Info:       https://${APP_FQDN}/api/info"
-echo "  API Docs:   https://${APP_FQDN}/docs"
+echo "  Health:     https://${APP_FQDN}/app1/health"
+echo "  Readiness:  https://${APP_FQDN}/app1/health/ready"
+echo "  Liveness:   https://${APP_FQDN}/app1/health/live"
+echo "  Info:       https://${APP_FQDN}/app1/api/info"
+echo "  API Docs:   https://${APP_FQDN}/app1/docs"
 echo ""
 echo "Generated manifest:"
 echo "  ${MANIFEST_OUTPUT}"

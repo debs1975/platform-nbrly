@@ -1,10 +1,55 @@
 #!/bin/bash
+#
+# Deploy HTTP Routing Configuration for Azure Container Apps
+#
+# This script deploys and manages HTTP routing configurations for Azure Container Apps
+# environments. It generates routing manifests from templates and applies them to the
+# specified environment.
+#
+# USAGE:
+#   ./deploy-routing.sh [ENVIRONMENT]
+#
+# PARAMETERS:
+#   ENVIRONMENT    Target environment (dev|staging|prod). Defaults to 'dev' if not specified.
+#
+# PREREQUISITES:
+#   - Azure CLI installed and configured
+#   - jq utility for JSON processing
+#   - Infrastructure config file: ../../iac-cli/config/parameters-{ENVIRONMENT}.json
+#   - App config file: ../config/app-config-{ENVIRONMENT}.json
+#   - Routing template: ../manifests/routing.yaml
+#   - Container Apps Environment must be deployed (via 03-deploy-compute.sh)
+#   - Azure login helper script: ../../iac-cli/scripts/helpers/azure-login.sh
+#
+# FUNCTIONALITY:
+#   1. Validates all required configuration files exist
+#   2. Extracts configuration values from JSON files (project name, environment, region, etc.)
+#   3. Constructs Azure resource names using naming convention
+#   4. Authenticates to Azure using helper script
+#   5. Verifies Container Apps Environment exists
+#   6. Generates routing configuration from template using sed substitution
+#   7. Creates or updates HTTP route configuration in Azure
+#   8. Displays deployment summary with test URLs and management commands
+#
+# OUTPUTS:
+#   - Generated routing manifest: ../manifests/.generated/routing-{ENVIRONMENT}.yaml
+#   - Console output with deployment status and test instructions
+#
+# EXIT CODES:
+#   0 - Success
+#   1 - Missing configuration files or Container Apps Environment not found
+#
+# EXAMPLES:
+#   ./deploy-routing.sh              # Deploy to dev environment
+#   ./deploy-routing.sh staging      # Deploy to staging environment
+#   ./deploy-routing.sh prod         # Deploy to production environment
 set -e
+
 
 ENVIRONMENT=${1:-dev}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INFRA_CONFIG_FILE="${SCRIPT_DIR}/../../config/parameters-${ENVIRONMENT}.json"
+INFRA_CONFIG_FILE="${SCRIPT_DIR}/../../iac-cli/config/parameters-${ENVIRONMENT}.json"
 APP_CONFIG_FILE="${SCRIPT_DIR}/../config/app-config-${ENVIRONMENT}.json"
 ROUTING_TEMPLATE="${SCRIPT_DIR}/../manifests/routing.yaml"
 ROUTING_OUTPUT="${SCRIPT_DIR}/../manifests/.generated/routing-${ENVIRONMENT}.yaml"
@@ -31,11 +76,11 @@ REGION=$(jq -r '.location' "$INFRA_CONFIG_FILE")
 APP_NAME_SUFFIX=$(jq -r '.containerApp.nameSuffix' "$APP_CONFIG_FILE")
 
 RG_NAME="${PROJECT_NAME}-${ENV}-${REGION}-rg"
-ENV_NAME="${PROJECT_NAME}-${ENV}-${REGION}-env"
+ENV_NAME="${PROJECT_NAME}-${ENV}-${REGION}-cae"
 ROUTE_CONFIG_NAME="${PROJECT_NAME}-${ENV}-${REGION}-route"
 APP_NAME="${PROJECT_NAME}-${ENV}-${REGION}-${APP_NAME_SUFFIX}"
 
-source "${SCRIPT_DIR}/../../scripts/helpers/azure-login.sh"
+source "${SCRIPT_DIR}/../../iac-cli/scripts/helpers/azure-login.sh"
 azure_login "$ENV"
 
 echo "=========================================="
@@ -49,7 +94,7 @@ echo "=========================================="
 
 if ! az containerapp env show --name "$ENV_NAME" --resource-group "$RG_NAME" &>/dev/null; then
     echo "Container Apps Environment not found: $ENV_NAME"
-    echo "Deploy infrastructure first: ./scripts/03-deploy-compute.sh ${ENV}"
+    echo "Deploy infrastructure first: ./iac-cli/scripts/03-deploy-compute.sh ${ENV}"
     exit 1
 fi
 
@@ -65,34 +110,16 @@ sed -e "s|{{APP_NAME}}|${APP_NAME}|g" \
 echo "Generated: $ROUTING_OUTPUT"
 
 echo ""
-echo "Checking existing route configuration..."
-EXISTING_ROUTE=$(az containerapp env http-route-config show \
+echo "Deploying HTTP route configuration..."
+
+# Try to create or update (Azure will handle if it exists)
+az containerapp env http-route-config set \
     --http-route-config-name "$ROUTE_CONFIG_NAME" \
     --resource-group "$RG_NAME" \
     --name "$ENV_NAME" \
-    --query id -o tsv 2>/dev/null || echo "")
+    --yaml "$ROUTING_OUTPUT"
 
-if [ -z "$EXISTING_ROUTE" ]; then
-    echo "Creating new HTTP route configuration..."
-    
-    az containerapp env http-route-config create \
-        --http-route-config-name "$ROUTE_CONFIG_NAME" \
-        --resource-group "$RG_NAME" \
-        --name "$ENV_NAME" \
-        --yaml "$ROUTING_OUTPUT"
-    
-    echo "Route configuration created: $ROUTE_CONFIG_NAME"
-else
-    echo "Updating existing HTTP route configuration..."
-    
-    az containerapp env http-route-config update \
-        --http-route-config-name "$ROUTE_CONFIG_NAME" \
-        --resource-group "$RG_NAME" \
-        --name "$ENV_NAME" \
-        --yaml "$ROUTING_OUTPUT"
-    
-    echo "Route configuration updated: $ROUTE_CONFIG_NAME"
-fi
+echo "Route configuration deployed: $ROUTE_CONFIG_NAME"
 
 ENV_FQDN=$(az containerapp env show \
     --name "$ENV_NAME" \
@@ -107,8 +134,13 @@ echo "Environment FQDN: ${ENV_FQDN}"
 echo "Route Config: ${ROUTE_CONFIG_NAME}"
 echo ""
 echo "Test the routing:"
-echo "  curl https://${ENV_FQDN}/app1"
-echo "  curl https://${ENV_FQDN}/app1/health"
+echo "  App1:"
+echo "    curl https://${ENV_FQDN}/app1/health"
+echo "    curl https://${ENV_FQDN}/app1/api/info"
+echo ""
+echo "  App2:"
+echo "    curl https://${ENV_FQDN}/app2/health"
+echo "    curl https://${ENV_FQDN}/app2/api/tasks"
 echo ""
 echo "View route configuration:"
 echo "  az containerapp env http-route-config show \\"

@@ -19,9 +19,8 @@ Environment FQDN (https://env.region.azurecontainerapps.io)
     ↓
 HTTP Route Config (routing rules)
     ↓
-├─ /app1/* → Container App 1 (api-ca)
-├─ /app2/* → Container App 2 (admin-ca)
-└─ /api/*  → Container App 3 (backend-ca)
+├─ /app1/* → Container App 1 (api-ca)  - Basic FastAPI
+└─ /app2/* → Container App 2 (api2-ca) - Task Management API
 ```
 
 ## Configuration Files
@@ -38,7 +37,14 @@ routes:
     action:
       prefixRewrite: /app1
     target:
-      containerApp: {{APP_NAME}}
+      containerApp: {{PROJECT_NAME}}-{{ENV}}-eastus-api-ca
+  
+  - match:
+      prefix: /app2
+    action:
+      prefixRewrite: /app2
+    target:
+      containerApp: {{PROJECT_NAME}}-{{ENV}}-eastus-api2-ca
 ```
 
 ### Deployment Script
@@ -124,21 +130,21 @@ app = FastAPI(
 
 ### 1. Deploy Container Apps
 
-First, deploy all container apps that will be part of the routing:
+First, deploy both container apps that will be part of the routing:
 
 ```bash
 cd sample-app
 
-# Deploy first app
-./scripts/deploy-yaml.sh dev
+# Build and deploy App1
+./scripts/deploy.sh dev latest app
 
-# Deploy additional apps (modify configs as needed)
-# ./scripts/deploy-yaml.sh dev
+# Build and deploy App2
+./scripts/deploy.sh dev latest app2
 ```
 
 ### 2. Configure Routing Rules
 
-Edit `manifests/routing.yaml` to define your routes:
+Edit `manifests/routing.yaml` to define your routes (already configured for App1 and App2):
 
 ```yaml
 routes:
@@ -147,15 +153,19 @@ routes:
     action:
       prefixRewrite: /app1
     target:
-      containerApp: {{APP_NAME}}
+      containerApp: {{PROJECT_NAME}}-{{ENV}}-eastus-api-ca
   
   - match:
       prefix: /app2
     action:
       prefixRewrite: /app2
     target:
-      containerApp: myapp-dev-eastus-app2-ca
+      containerApp: {{PROJECT_NAME}}-{{ENV}}-eastus-api2-ca
 ```
+
+**Note:** Container App names updated to comply with Azure's 32-character limit:
+- App1: `nbrly-dev-eastus-api-ca` (22 chars)
+- App2: `nbrly-dev-eastus-api2-ca` (23 chars)
 
 ### 3. Deploy Routing Configuration
 
@@ -175,14 +185,19 @@ cd sample-app
 ```bash
 # Get environment FQDN
 ENV_FQDN=$(az containerapp env show \
-  --name myapp-dev-eastus-env \
-  --resource-group myapp-dev-eastus-rg \
+  --name nbrly-dev-eastus-cae \
+  --resource-group nbrly-dev-eastus-rg \
   --query properties.defaultDomain -o tsv)
 
-# Test routes
-curl https://${ENV_FQDN}/app1
+# Test App1 routes
 curl https://${ENV_FQDN}/app1/health
-curl https://${ENV_FQDN}/app2
+curl https://${ENV_FQDN}/app1/api/info
+curl https://${ENV_FQDN}/app1/docs
+
+# Test App2 routes
+curl https://${ENV_FQDN}/app2/health
+curl https://${ENV_FQDN}/app2/api/tasks
+curl https://${ENV_FQDN}/app2/docs
 ```
 
 ## Managing Routes
@@ -318,8 +333,8 @@ manifests/.generated/
      --resource-group <rg> \
      --query properties.configuration.ingress.fqdn -o tsv)
    
-   # Test direct access
-   curl https://${APP_FQDN}/health
+   # Test direct access (include app's root path prefix)
+   curl https://${APP_FQDN}/app1/health
    ```
 
 ### 404 Not Found

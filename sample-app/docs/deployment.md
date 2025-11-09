@@ -140,7 +140,7 @@ template:
     - probes:
         - type: liveness
           httpGet:
-            path: /health/live
+            path: /app1/health/live
           failureThreshold: 5    # More tolerant
 ```
 

@@ -116,38 +116,38 @@ properties:
           # Liveness probe - restart container if this fails
           - type: liveness
             httpGet:
-              path: /health/live
+              path: {{LIVENESS_PROBE_PATH}}
               port: {{CONTAINER_PORT}}
               scheme: HTTP
-            initialDelaySeconds: 10
-            periodSeconds: 10
-            timeoutSeconds: 5
+            initialDelaySeconds: {{LIVENESS_INITIAL_DELAY}}
+            periodSeconds: {{LIVENESS_PERIOD}}
+            timeoutSeconds: {{LIVENESS_TIMEOUT}}
             successThreshold: 1
-            failureThreshold: 3
+            failureThreshold: {{LIVENESS_FAILURE_THRESHOLD}}
           
           # Readiness probe - don't send traffic if this fails
           - type: readiness
             httpGet:
-              path: /health/ready
+              path: {{READINESS_PROBE_PATH}}
               port: {{CONTAINER_PORT}}
               scheme: HTTP
-            initialDelaySeconds: 5
-            periodSeconds: 5
-            timeoutSeconds: 3
+            initialDelaySeconds: {{READINESS_INITIAL_DELAY}}
+            periodSeconds: {{READINESS_PERIOD}}
+            timeoutSeconds: {{READINESS_TIMEOUT}}
             successThreshold: 1
-            failureThreshold: 3
+            failureThreshold: {{READINESS_FAILURE_THRESHOLD}}
           
           # Startup probe - for slow-starting apps
           - type: startup
             httpGet:
-              path: /health
+              path: {{STARTUP_PROBE_PATH}}
               port: {{CONTAINER_PORT}}
               scheme: HTTP
-            initialDelaySeconds: 0
-            periodSeconds: 5
-            timeoutSeconds: 3
+            initialDelaySeconds: {{STARTUP_INITIAL_DELAY}}
+            periodSeconds: {{STARTUP_PERIOD}}
+            timeoutSeconds: {{STARTUP_TIMEOUT}}
             successThreshold: 1
-            failureThreshold: 10
+            failureThreshold: {{STARTUP_FAILURE_THRESHOLD}}
     
     # Scaling configuration
     scale:

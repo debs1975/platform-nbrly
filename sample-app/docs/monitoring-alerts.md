@@ -37,7 +37,7 @@ az monitor metrics alert create \
 **Investigation Steps**:
 1. Check container logs: `az containerapp logs show --name $APP_NAME -g $RG_NAME --follow`
 2. Review recent deployments and configuration changes
-3. Check health probe configuration (`/health/ready`, `/health/live`)
+3. Check health probe configuration (`/app1/health/ready`, `/app1/health/live`)
 4. Verify memory and CPU allocation vs. actual usage
 5. Review Application Insights exception tracking
 

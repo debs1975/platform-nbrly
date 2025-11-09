@@ -45,23 +45,23 @@ az ad sp create-for-rbac \
   --scopes /subscriptions/{your-subscription-id}
 
 # Create credential file from template
-cp creds/azure-credentials.example.json creds/azure-credentials-dev.cred
+cp iac-cli/creds/azure-credentials.example.json creds/azure-credentials-dev.cred
 
 # Edit with your service principal details
-vi creds/azure-credentials-dev.cred
+vi iac-cli/creds/azure-credentials-dev.cred
 
 # Set secure permissions
-chmod 600 creds/azure-credentials-dev.cred
+chmod 600 iac-cli/creds/azure-credentials-dev.cred
 
 # Test authentication
-./scripts/test-azure-login.sh dev
+./iac-cli/scripts/test-azure-login.sh dev
 ```
 
 **Option B: Interactive Login (Fallback)**
 
 If no credential file is provided, scripts will prompt for interactive browser-based login.
 
-📖 **Detailed Setup**: See [`creds/README.md`](creds/README.md) for complete authentication setup instructions.
+📖 **Detailed Setup**: See [`iac-cli/creds/README.md`](creds/README.md) for complete authentication setup instructions.
 
 **Important: Grant Service Principal Permissions**
 
@@ -70,10 +70,10 @@ Before deploying infrastructure, ensure your service principal has the necessary
 ```bash
 # Grant Contributor + User Access Administrator roles
 # (Required for creating resources and assigning RBAC roles)
-./scripts/helpers/grant-sp-permissions.sh dev resourcegroup
+./iac-cli/scripts/helpers/grant-sp-permissions.sh dev resourcegroup
 
 # For subscription-level permissions (broader scope):
-# ./scripts/helpers/grant-sp-permissions.sh dev subscription
+# ./iac-cli/scripts/helpers/grant-sp-permissions.sh dev subscription
 ```
 
 💡 **When to run this:**
@@ -81,7 +81,7 @@ Before deploying infrastructure, ensure your service principal has the necessary
 - If you encounter "AuthorizationFailed" errors during deployment
 - When the service principal needs to assign RBAC roles (Key Vault, ACR, etc.)
 
-See [`scripts/helpers/grant-sp-permissions.sh`](scripts/helpers/grant-sp-permissions.sh) for details.
+See [`iac-cli/scripts/helpers/grant-sp-permissions.sh`](scripts/helpers/grant-sp-permissions.sh) for details.
 
 ### 2. Deploy Infrastructure (Dev Environment)
 
@@ -91,10 +91,10 @@ git clone https://github.com/debs1975/platform-nbrly.git
 cd platform-nbrly
 
 # 2. Review/update configuration
-vi config/parameters-dev.json
+vi iac-cli/config/parameters-dev.json
 
 # 3. Deploy in layers (40 minutes total)
-cd scripts
+cd iac-cli/scripts
 ./01-deploy-networking.sh    # ~5 min  - VNet, subnets, NSG, DNS
 ./02-deploy-security.sh       # ~3 min  - Key Vault, Managed Identity
 ./03-deploy-compute.sh        # ~10 min - ACR, Container Apps
@@ -111,10 +111,10 @@ cd scripts
 ```bash
 # Deploy sample FastAPI application
 cd sample-app
-./scripts/deploy.sh dev
+./iac-cli/scripts/deploy.sh dev
 
 # Configure monitoring and alerts
-./scripts/setup-monitoring.sh dev
+./iac-cli/scripts/setup-monitoring.sh dev
 ```
 
 See [`sample-app/README.md`](sample-app/README.md) for detailed application deployment and monitoring setup.
@@ -124,7 +124,7 @@ See [`sample-app/README.md`](sample-app/README.md) for detailed application depl
 ## Documentation
 
 ### 📄 Architecture & Design
-- **[Azure Infrastructure Design (Dev)](docs/azure-infrastructure-design-dev.md)** - Complete architecture, deployment plan, capacity planning, and operational runbook
+- **[Azure Infrastructure Design (Dev)](iac-cli/docs/azure-infrastructure-design-dev.md)** - Complete architecture, deployment plan, capacity planning, and operational runbook
   - Detailed network capacity planning (supports 200 Container Apps, 30 private endpoints)
   - Compute and database sizing guidelines
   - Cost projections and optimization strategies
@@ -135,7 +135,7 @@ See [`sample-app/README.md`](sample-app/README.md) for detailed application depl
   - Detailed cost optimization recommendations
 
 ### 🔒 Authentication & Security
-- **[Azure Authentication Setup](docs/azure-authentication-setup.md)** - Complete implementation guide for automated Azure CLI authentication
+- **[Azure Authentication Setup](iac-cli/docs/azure-authentication-setup.md)** - Complete implementation guide for automated Azure CLI authentication
   - Service principal setup and credential management
   - Security best practices and file permissions
   - Multi-environment authentication workflow
@@ -144,14 +144,14 @@ See [`sample-app/README.md`](sample-app/README.md) for detailed application depl
   - Step-by-step service principal creation
   - Credential file format and security requirements
   - Emergency credential rotation procedures
-- **[SSL/TLS Setup](docs/ssl-tls-setup.md)** - Custom domain and SSL certificate configuration
+- **[SSL/TLS Setup](iac-cli/docs/ssl-tls-setup.md)** - Custom domain and SSL certificate configuration
   - Certificate requirements and acquisition
   - DNS configuration (CNAME and TXT records)
   - Deployment and verification procedures
   - Certificate renewal and management
 
 ### 🔧 Deployment Scripts
-All scripts located in [`scripts/`](scripts/) directory:
+All scripts located in [`iac-cli/scripts/`](iac-cli/scripts/) directory:
 - `01-deploy-networking.sh` - VNet, subnets, NSG, Private DNS zones
 - `02-deploy-security.sh` - Key Vault, User-Assigned Managed Identity, RBAC
 - `03-deploy-compute.sh` - ACR, Container Apps Environment
@@ -161,7 +161,7 @@ All scripts located in [`scripts/`](scripts/) directory:
 - `99-verify-deployment.sh` - Deployment verification and validation
 - `test-azure-login.sh` - Authentication setup testing
 
-**Helper Scripts** in [`scripts/helpers/`](scripts/helpers/):
+**Helper Scripts** in [`iac-cli/scripts/helpers/`](scripts/helpers/):
 - `azure-login.sh` - Automated Azure authentication
 - `grant-sp-permissions.sh` - Grant service principal RBAC permissions
 - `upload-ssl-certificate.sh` - Upload SSL certificates to Key Vault
@@ -170,9 +170,9 @@ All scripts located in [`scripts/`](scripts/) directory:
 - `logging.sh` - Logging utilities for scripts
 
 ### 📊 Configuration
-- [`config/parameters-dev.json`](config/parameters-dev.json) - Development environment parameters
-- [`config/parameters-staging.json`](config/parameters-staging.json) - Staging environment parameters
-- [`config/parameters-prod.json`](config/parameters-prod.json) - Production environment parameters
+- [`iac-cli/config/parameters-dev.json`](iac-cli/config/parameters-dev.json) - Development environment parameters
+- [`iac-cli/config/parameters-staging.json`](iac-cli/config/parameters-staging.json) - Staging environment parameters
+- [`iac-cli/config/parameters-prod.json`](iac-cli/config/parameters-prod.json) - Production environment parameters
 
 ### 🔒 Repository Management
 - **[Git Ignore Strategy](.gitignore-guide.md)** - Comprehensive guide to version control exclusions
@@ -243,7 +243,7 @@ All resources follow the pattern: `{{project}}-{{env}}-{{region}}-{{resourceType
 | Without Optimizations | $900-1,500 |
 | With Scale-to-Zero, Log Archival, Auto-Shutdown | $400-600 |
 
-See [Capacity Planning](docs/azure-infrastructure-design-dev.md#capacity-planning--sizing-strategy) for detailed projections and optimization strategies.
+See [Capacity Planning](iac-cli/docs/azure-infrastructure-design-dev.md#capacity-planning--sizing-strategy) for detailed projections and optimization strategies.
 
 *Costs are estimates based on East US region pricing as of November 2025*
 
@@ -296,31 +296,56 @@ platform-nbrly/
 │   ├── copilot-instructions.md          # AI agent guidelines
 │   └── prompts/
 │       └── azure-infrastructure-requirements.prompt.md
-├── config/
-│   ├── parameters-dev.json              # Dev environment config
-│   ├── parameters-staging.json          # Staging environment config
-│   └── parameters-prod.json             # Production environment config
-├── docs/
-│   ├── azure-infrastructure-design-dev.md  # Architecture documentation
-│   └── ssl-tls-setup.md                 # SSL/TLS and custom domain setup
-├── scripts/
-│   ├── 01-deploy-networking.sh          # Layer 1: Networking
-│   ├── 02-deploy-security.sh            # Layer 2: Security
-│   ├── 03-deploy-compute.sh             # Layer 3: Compute (ACR, CAE)
-│   ├── 04-deploy-data.sh                # Layer 4: Data
-│   ├── 05-deploy-monitoring.sh          # Layer 5: Monitoring
-│   ├── 06-deploy-ssl.sh                 # Layer 6: SSL/TLS & Custom Domain
-│   └── 99-verify-deployment.sh          # Verification
+├── iac-cli/                             # Infrastructure-as-Code (Azure CLI)
+│   ├── config/
+│   │   ├── parameters-dev.json          # Dev environment config
+│   │   ├── parameters-staging.json      # Staging environment config
+│   │   └── parameters-prod.json         # Production environment config
+│   ├── creds/
+│   │   ├── azure-credentials.example.json  # Credential template
+│   │   └── README.md                    # Credential setup guide
+│   ├── docs/
+│   │   ├── azure-infrastructure-design-dev.md  # Architecture documentation
+│   │   ├── azure-authentication-setup.md       # Authentication guide
+│   │   └── ssl-tls-setup.md             # SSL/TLS and custom domain setup
+│   └── scripts/
+│       ├── 01-deploy-networking.sh      # Layer 1: Networking
+│       ├── 02-deploy-security.sh        # Layer 2: Security
+│       ├── 03-deploy-compute.sh         # Layer 3: Compute (ACR, CAE)
+│       ├── 04-deploy-data.sh            # Layer 4: Data
+│       ├── 05-deploy-monitoring.sh      # Layer 5: Monitoring
+│       ├── 06-deploy-ssl.sh             # Layer 6: SSL/TLS & Custom Domain
+│       ├── 99-verify-deployment.sh      # Verification
+│       ├── test-azure-login.sh          # Authentication testing
+│       └── helpers/
+│           ├── azure-login.sh           # Authentication helper
+│           ├── grant-sp-permissions.sh  # RBAC permissions helper
+│           ├── upload-ssl-certificate.sh # SSL certificate upload
+│           └── ...                      # Other helpers
+├── logs/                                # Deployment logs
 ├── sample-app/                          # Sample FastAPI application
 │   ├── main.py                          # FastAPI app with health checks
 │   ├── requirements.txt                 # Python dependencies
 │   ├── Dockerfile                       # Multi-stage Docker build
 │   ├── .dockerignore                    # Docker build exclusions
 │   ├── .gitignore                       # Git exclusions
+│   ├── config/
+│   │   ├── app-config-dev.json          # App-specific dev config
+│   │   ├── app-config-staging.json      # App-specific staging config
+│   │   └── app-config-prod.json         # App-specific prod config
+│   ├── manifests/
+│   │   ├── containerapp.yaml            # Container App YAML template
+│   │   └── routing.yaml                 # HTTP routing template
 │   ├── scripts/
 │   │   ├── deploy.sh                    # Deployment automation
+│   │   ├── deploy-yaml.sh               # YAML-based deployment
+│   │   ├── deploy-routing.sh            # HTTP routing deployment
 │   │   └── setup-monitoring.sh          # Monitoring & alerts setup
 │   ├── docs/
+│   │   ├── configuration.md             # App configuration guide
+│   │   ├── deployment.md                # Deployment guide
+│   │   ├── manifests.md                 # YAML manifest documentation
+│   │   ├── routing.md                   # HTTP routing guide
 │   │   └── monitoring-alerts.md         # Alert configurations & runbooks
 │   └── README.md                        # Application documentation
 ├── frontend/                            # React application (TBD)
@@ -354,7 +379,7 @@ platform-nbrly/
 ## Support & Contributing
 
 - **Issues**: Report bugs or request features via GitHub Issues
-- **Documentation**: See [`docs/`](docs/) directory for detailed guides
+- **Documentation**: See [`iac-cli/docs/`](iac-cli/docs/) directory for detailed guides
 - **Architecture Questions**: Refer to [Infrastructure Requirements](.github/prompts/azure-infrastructure-requirements.prompt.md)
 
 ---

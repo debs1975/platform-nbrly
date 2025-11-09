@@ -1,4 +1,4 @@
-# Multi-stage Dockerfile for FastAPI application
+# Multi-stage Dockerfile for App2 (main_app2.py)
 # Optimized for Azure Container Apps deployment
 
 # Stage 1: Builder
@@ -27,8 +27,7 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 # Copy Python dependencies from builder
 COPY --from=builder /root/.local /home/appuser/.local
 
-# Copy application code
-COPY main_app1.py .
+# Copy application code - ONLY App2
 COPY main_app2.py .
 
 # Set ownership to non-root user
@@ -40,13 +39,12 @@ USER appuser
 # Add local bin to PATH
 ENV PATH=/home/appuser/.local/bin:$PATH
 
-# Expose port (Container Apps will override this)
-EXPOSE 8000
+# Expose port
 EXPOSE 8001
 
-# Health check (default to app1)
+# Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT:-8000}/health/live')"
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8001/app2/health/live')"
 
-# Run the application (use APP_MODULE env var to choose which app to run)
-CMD uvicorn ${APP_MODULE:-main_app1:app} --host 0.0.0.0 --port ${PORT:-8000} --workers 1
+# Run App2 directly (no env var needed)
+CMD ["uvicorn", "main_app2:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]

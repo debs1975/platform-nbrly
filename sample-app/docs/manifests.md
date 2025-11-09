@@ -183,12 +183,12 @@ template:
     - probes:
         - type: liveness
           httpGet:
-            path: /health/live
+            path: /app1/health/live
             port: 8000
           failureThreshold: 3
         - type: readiness
           httpGet:
-            path: /health/ready
+            path: /app1/health/ready
             port: 8000
           failureThreshold: 3
 ```

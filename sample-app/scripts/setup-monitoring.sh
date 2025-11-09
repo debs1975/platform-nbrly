@@ -9,9 +9,9 @@ set -e
 
 ENVIRONMENT=${1:-dev}
 
-# Load infrastructure and app configuration
+# Load infrastructure and application configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INFRA_CONFIG_FILE="${SCRIPT_DIR}/../../config/parameters-${ENVIRONMENT}.json"
+INFRA_CONFIG_FILE="${SCRIPT_DIR}/../../iac-cli/config/parameters-${ENVIRONMENT}.json"
 APP_CONFIG_FILE="${SCRIPT_DIR}/../config/app-config-${ENVIRONMENT}.json"
 
 if [ ! -f "$INFRA_CONFIG_FILE" ]; then
@@ -39,7 +39,7 @@ CONTAINER_MEMORY=$(jq -r '.containerApp.resources.memory' "$APP_CONFIG_FILE")
 # ============================================================================
 # Azure Authentication
 # ============================================================================
-source "${SCRIPT_DIR}/../../scripts/helpers/azure-login.sh"
+source "${SCRIPT_DIR}/../../iac-cli/scripts/helpers/azure-login.sh"
 azure_login "$ENV"
 
 # Construct resource names
@@ -120,7 +120,7 @@ APPINSIGHTS_CONN_STRING=$(az monitor app-insights component show \
 
 if [ -z "$APPINSIGHTS_CONN_STRING" ]; then
     echo "⚠️  Application Insights not found. Run infrastructure deployment first:"
-    echo "   ./scripts/05-deploy-monitoring.sh ${ENV}"
+    echo "   ./iac-cli/scripts/05-deploy-monitoring.sh ${ENV}"
     exit 1
 fi
 

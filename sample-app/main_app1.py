@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app with path prefix for routing
 app = FastAPI(
-    title="NBRLY Sample API",
+    title="NBRLY Sample API-App1",
     description="Sample FastAPI application for Azure Container Apps deployment",
     version="1.0.0",
     root_path="/app1"
