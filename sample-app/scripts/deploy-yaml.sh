@@ -8,14 +8,16 @@ set -euo pipefail
 # ============================================================================
 # This script deploys the Container App using a YAML manifest instead of
 # CLI flags, providing better version control and declarative configuration.
+# Note: This is a standalone deployment script for the sample-app project.
 # ============================================================================
 
 ENVIRONMENT=${1:-dev}
 
-# Load infrastructure and application configuration
+# Load configuration from sample-app folder only
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INFRA_CONFIG_FILE="${SCRIPT_DIR}/../../iac-cli/config/parameters-${ENVIRONMENT}.json"
 APP_CONFIG_FILE="${SCRIPT_DIR}/../config/app-config-${ENVIRONMENT}.json"
+INFRA_CONFIG_FILE="${SCRIPT_DIR}/../config/infra-config-${ENVIRONMENT}.json"
+DEPLOYMENT_CONFIG_FILE="${SCRIPT_DIR}/../config/deployment-config-${ENVIRONMENT}.json"
 MANIFEST_TEMPLATE="${SCRIPT_DIR}/../manifests/containerapp.yaml"
 MANIFEST_OUTPUT="${SCRIPT_DIR}/../manifests/.generated/containerapp-${ENVIRONMENT}.yaml"
 
@@ -25,17 +27,36 @@ echo "  Deploy Sample API - YAML-Based Deployment"
 echo "============================================================"
 echo ""
 
-# Validate configuration file
-if [ ! -f "$INFRA_CONFIG_FILE" ]; then
-    echo "ERROR: Infrastructure configuration file not found: $INFRA_CONFIG_FILE"
-    echo "Usage: ./deploy-yaml.sh [dev|staging|prod]"
-    exit 1
-fi
-
 # Validate application configuration file
 if [ ! -f "$APP_CONFIG_FILE" ]; then
     echo "ERROR: Application configuration file not found: $APP_CONFIG_FILE"
     echo "Usage: ./deploy-yaml.sh [dev|staging|prod]"
+    echo "Expected config files in sample-app/config/:"
+    echo "  - app-config-${ENVIRONMENT}.json"
+    echo "  - infra-config-${ENVIRONMENT}.json"
+    echo "  - deployment-config-${ENVIRONMENT}.json"
+    exit 1
+fi
+
+# Validate infrastructure configuration file
+if [ ! -f "$INFRA_CONFIG_FILE" ]; then
+    echo "ERROR: Infrastructure configuration file not found: $INFRA_CONFIG_FILE"
+    echo "Usage: ./deploy-yaml.sh [dev|staging|prod]"
+    echo "Expected config files in sample-app/config/:"
+    echo "  - app-config-${ENVIRONMENT}.json"
+    echo "  - infra-config-${ENVIRONMENT}.json"
+    echo "  - deployment-config-${ENVIRONMENT}.json"
+    exit 1
+fi
+
+# Validate deployment configuration file
+if [ ! -f "$DEPLOYMENT_CONFIG_FILE" ]; then
+    echo "ERROR: Deployment configuration file not found: $DEPLOYMENT_CONFIG_FILE"
+    echo "Usage: ./deploy-yaml.sh [dev|staging|prod]"
+    echo "Expected config files in sample-app/config/:"
+    echo "  - app-config-${ENVIRONMENT}.json"
+    echo "  - infra-config-${ENVIRONMENT}.json"
+    echo "  - deployment-config-${ENVIRONMENT}.json"
     exit 1
 fi
 
@@ -45,10 +66,16 @@ if [ ! -f "$MANIFEST_TEMPLATE" ]; then
     exit 1
 fi
 
-# Check for jq
+# Check for required tools
 if ! command -v jq &>/dev/null; then
     echo "ERROR: 'jq' is required but not installed"
     echo "Install with: brew install jq"
+    exit 1
+fi
+
+if ! command -v az &>/dev/null; then
+    echo "ERROR: Azure CLI is required but not installed"
+    echo "Install from: https://docs.microsoft.com/en-us/cli/azure/install-azure-cli"
     exit 1
 fi
 
@@ -90,23 +117,42 @@ STARTUP_FAILURE_THRESHOLD=$(jq -r '.healthProbes.startup.failureThreshold' "$APP
 # ============================================================================
 # Azure Authentication
 # ============================================================================
-source "${SCRIPT_DIR}/../../iac-cli/scripts/helpers/azure-login.sh"
-azure_login "$ENV"
+echo "Authenticating with Azure..."
 
-# Construct resource names (lowercase)
-RG_NAME="${PROJECT_NAME}-${ENV}-eastus-rg"
-ACR_NAME="${PROJECT_NAME}${ENV}eastusacr"
-CAE_NAME="${PROJECT_NAME}-${ENV}-eastus-cae"
-APP_NAME="${PROJECT_NAME}-${ENV}-eastus-${APP_NAME_SUFFIX}-ca"
-UAMI_NAME="${PROJECT_NAME}-${ENV}-eastus-uami"
-KV_NAME="${PROJECT_NAME}${ENV}eastuskv"
+# Set subscription
+if [ -n "$SUBSCRIPTION_ID" ] && [ "$SUBSCRIPTION_ID" != "null" ]; then
+    echo "Setting Azure subscription to: $SUBSCRIPTION_ID"
+    az account set --subscription "$SUBSCRIPTION_ID"
+else
+    echo "Using current Azure subscription"
+fi
+
+# Verify authentication
+CURRENT_USER=$(az account show --query user.name -o tsv 2>/dev/null || echo "")
+if [ -z "$CURRENT_USER" ]; then
+    echo "ERROR: Not authenticated with Azure CLI"
+    echo "Please run: az login"
+    exit 1
+fi
+
+echo "Authenticated as: $CURRENT_USER"
+
+# Construct resource names from infrastructure config
+RG_NAME=$(jq -r '.resourceGroup.name' "$INFRA_CONFIG_FILE")
+ACR_NAME=$(jq -r '.acr.name' "$INFRA_CONFIG_FILE")
+CAE_NAME=$(jq -r '.containerAppsEnvironment.name' "$INFRA_CONFIG_FILE")
+APP_NAME="${PROJECT_NAME}-${ENV}-${LOCATION}-${APP_NAME_SUFFIX}-ca"
+UAMI_NAME=$(jq -r '.managedIdentity.name' "$INFRA_CONFIG_FILE")
+KV_NAME=$(jq -r '.keyVault.name' "$INFRA_CONFIG_FILE")
 
 # Application configuration
 IMAGE_NAME=$(jq -r '.container.image.name' "$APP_CONFIG_FILE")
 FULL_IMAGE_NAME="${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}"
 
+echo ""
 echo "Configuration:"
 echo "  Environment: ${ENV}"
+echo "  Location: ${LOCATION}"
 echo "  Resource Group: ${RG_NAME}"
 echo "  Container App: ${APP_NAME}"
 echo "  Image: ${FULL_IMAGE_NAME}"
@@ -117,17 +163,28 @@ echo ""
 echo "Verifying infrastructure..."
 
 if ! az group show --name "$RG_NAME" &>/dev/null; then
-    echo "ERROR: Resource group not found. Run infrastructure deployment scripts first."
+    echo "ERROR: Resource group '$RG_NAME' not found."
+    echo "Please create the required Azure infrastructure first:"
+    echo "  - Resource Group: $RG_NAME"
+    echo "  - Container Registry: $ACR_NAME"
+    echo "  - Container Apps Environment: $CAE_NAME"
+    echo "  - User-Assigned Managed Identity: $UAMI_NAME"
+    echo "  - Key Vault: $KV_NAME"
     exit 1
 fi
 
 if ! az acr show --name "$ACR_NAME" --resource-group "$RG_NAME" &>/dev/null; then
-    echo "ERROR: Container Registry not found. Run ./iac-cli/scripts/03-deploy-compute.sh first."
+    echo "ERROR: Container Registry '$ACR_NAME' not found in resource group '$RG_NAME'."
     exit 1
 fi
 
 if ! az containerapp env show --name "$CAE_NAME" --resource-group "$RG_NAME" &>/dev/null; then
-    echo "ERROR: Container Apps Environment not found. Run ./iac-cli/scripts/03-deploy-compute.sh first."
+    echo "ERROR: Container Apps Environment '$CAE_NAME' not found in resource group '$RG_NAME'."
+    exit 1
+fi
+
+if ! az identity show --resource-group "$RG_NAME" --name "$UAMI_NAME" &>/dev/null; then
+    echo "ERROR: User-Assigned Managed Identity '$UAMI_NAME' not found in resource group '$RG_NAME'."
     exit 1
 fi
 
@@ -201,6 +258,7 @@ sed -i.bak \
     -e "s|{{STARTUP_FAILURE_THRESHOLD}}|${STARTUP_FAILURE_THRESHOLD}|g" \
     -e "s|{{SUBSCRIPTION_ID}}|${SUBSCRIPTION_ID}|g" \
     -e "s|{{RESOURCE_GROUP}}|${RG_NAME}|g" \
+    -e "s|{{LOCATION}}|${LOCATION}|g" \
     -e "s|{{CREATED_DATE}}|$(date +%Y-%m-%d)|g" \
     "$TEMP_MANIFEST"
 

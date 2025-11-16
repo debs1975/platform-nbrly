@@ -6,11 +6,12 @@ This directory contains scripts for building and deploying the sample applicatio
 
 ### 🚀 deploy.sh (Complete Deployment)
 **Purpose:** All-in-one deployment - builds, pushes, and deploys  
-**Usage:** `./deploy.sh [environment] [tag]`  
+**Usage:** `./deploy.sh <app-name> [environment] [tag]`  
 **Example:**
 ```bash
-./deploy.sh dev              # Deploy dev with default tag
-./deploy.sh prod v1.2.3      # Deploy prod with custom tag
+./deploy.sh app1              # Deploy app1 to dev with latest tag
+./deploy.sh app2 dev          # Deploy app2 to dev with default tag
+./deploy.sh app1 prod v1.2.3  # Deploy app1 to prod with custom tag
 ```
 
 **What it does:**
@@ -22,17 +23,16 @@ This directory contains scripts for building and deploying the sample applicatio
 
 ### 🐳 build-push.sh (Image Build & Push)
 **Purpose:** Build Docker image and push to Azure Container Registry  
-**Usage:** `./build-push.sh [environment] [tag]`  
+**Usage:** `./build-push.sh <app-name> [environment] [tag]`  
 **Example:**
 ```bash
-./build-push.sh dev              # Build with default tag (latest)
-./build-push.sh staging          # Build staging with default tag
-./build-push.sh prod v1.2.3      # Build prod with custom tag v1.2.3
-./build-push.sh dev feature-xyz  # Build dev with feature branch tag
+./build-push.sh app1              # Build app1 for dev with default tag
+./build-push.sh app2 staging      # Build app2 for staging with default tag
+./build-push.sh app1 prod v1.2.3  # Build app1 for prod with custom tag v1.2.3
 ```
 
 **What it does:**
-1. ✅ Loads configuration from config files
+1. ✅ Loads configuration from config files (app1-config-{env}.json or app2-config-{env}.json)
 2. ✅ Verifies Azure Container Registry exists
 3. ✅ Builds Docker image with specified tag
 4. ✅ Also tags as 'latest'
@@ -50,16 +50,16 @@ This directory contains scripts for building and deploying the sample applicatio
 
 ### 📦 deploy-app.sh (Container App Deployment)
 **Purpose:** Deploy/update Container App (without building image)  
-**Usage:** `./deploy-app.sh [environment] [tag]`  
+**Usage:** `./deploy-app.sh <app-name> [environment] [tag]`  
 **Example:**
 ```bash
-./deploy-app.sh dev              # Deploy with default tag
-./deploy-app.sh prod v1.2.3      # Deploy specific version
-./deploy-app.sh staging latest   # Deploy latest staging image
+./deploy-app.sh app1              # Deploy app1 with default tag to dev
+./deploy-app.sh app2 prod v1.2.3  # Deploy app2 specific version to prod
+./deploy-app.sh app1 staging      # Deploy app1 latest staging image
 ```
 
 **What it does:**
-1. ✅ Loads configuration from config files
+1. ✅ Loads configuration from config files (app1-config-{env}.json or app2-config-{env}.json)
 2. ✅ Verifies infrastructure exists (RG, ACR, CAE)
 3. ✅ Verifies image exists in ACR
 4. ✅ Creates new Container App or updates existing one
@@ -141,42 +141,58 @@ This directory contains scripts for building and deploying the sample applicatio
 
 ### Standard Development Workflow
 ```bash
-# Complete deployment
-./deploy.sh dev
+# Deploy app1 to dev
+./deploy.sh app1 dev
+
+# Deploy app2 to dev
+./deploy.sh app2 dev
 ```
 
 ### CI/CD Pipeline Workflow
 ```bash
-# Step 1: Build and push (run once)
-./build-push.sh prod v${BUILD_NUMBER}
+# Step 1: Build and push app1 (run once)
+./build-push.sh app1 prod v${BUILD_NUMBER}
 
-# Step 2: Deploy to staging
-./deploy-app.sh staging v${BUILD_NUMBER}
+# Step 2: Deploy app1 to staging
+./deploy-app.sh app1 staging v${BUILD_NUMBER}
 
-# Step 3: After testing, deploy to prod
-./deploy-app.sh prod v${BUILD_NUMBER}
+# Step 3: After testing, deploy app1 to prod
+./deploy-app.sh app1 prod v${BUILD_NUMBER}
 ```
 
 ### Feature Branch Workflow
 ```bash
-# Build feature branch
-./build-push.sh dev feature-auth
+# Build app1 feature branch
+./build-push.sh app1 dev feature-auth
 
-# Deploy feature branch
-./deploy-app.sh dev feature-auth
+# Deploy app1 feature branch
+./deploy-app.sh app1 dev feature-auth
 
 # Test and merge, then deploy main
-./build-push.sh dev latest
-./deploy-app.sh dev latest
+./build-push.sh app1 dev latest
+./deploy-app.sh app1 dev latest
 ```
 
 ### Rollback Workflow
 ```bash
-# List available versions
-az acr repository show-tags --name nbrlydevevastusacr --repository sample-api --output table
+# List available versions for app1
+az acr repository show-tags --name nbrlydeveastusacr --repository sample-api-app1 --output table
 
 # Deploy previous version
-./deploy-app.sh prod v1.1.5
+./deploy-app.sh app1 prod v1.1.5
+```
+
+### Multi-App Deployment
+```bash
+# Deploy both apps to dev
+./deploy.sh app1 dev
+./deploy.sh app2 dev
+
+# Deploy both apps to prod with specific version
+./build-push.sh app1 prod v1.2.3
+./build-push.sh app2 prod v1.2.3
+./deploy-app.sh app1 prod v1.2.3
+./deploy-app.sh app2 prod v1.2.3
 ```
 
 ### GitOps Workflow
@@ -207,21 +223,22 @@ git commit -m "chore: update container app manifests"
 - ✅ Docker daemon running
 
 ### Configuration Files Required:
-- ✅ `../../iac-cli/config/parameters-{env}.json` (infrastructure config)
-- ✅ `../config/app-config-{env}.json` (application config)
+- ✅ `../config/infra-config-{env}.json` (infrastructure config)
+- ✅ `../config/app1-config-{env}.json` (app1 application config)
+- ✅ `../config/app2-config-{env}.json` (app2 application config)
 
 ---
 
 ## Configuration Sources
 
-### Infrastructure Config (`iac-cli/config/parameters-{env}.json`)
+### Infrastructure Config (`config/infra-config-{env}.json`)
 - Project name
 - Environment
 - Location
 - Subscription ID
 - Resource names (RG, ACR, CAE, UAMI, KV)
 
-### Application Config (`config/app-config-{env}.json`)
+### Application Config (`config/app1-config-{env}.json` or `config/app2-config-{env}.json`)
 - Container image name and tag
 - Resource limits (CPU, memory)
 - Scaling rules (min/max replicas, triggers)
@@ -246,31 +263,39 @@ All scripts include:
 
 ### During Development
 ```bash
-# Use default tags and complete deployment
-./deploy.sh dev
+# Deploy app1 with default settings
+./deploy.sh app1 dev
+
+# Deploy app2 with default settings
+./deploy.sh app2 dev
 ```
 
 ### For Production Releases
 ```bash
-# Use semantic versioning
-./build-push.sh prod v1.2.3
-./deploy-app.sh prod v1.2.3
+# Use semantic versioning for app1
+./build-push.sh app1 prod v1.2.3
+./deploy-app.sh app1 prod v1.2.3
+
+# Use semantic versioning for app2
+./build-push.sh app2 prod v1.2.3
+./deploy-app.sh app2 prod v1.2.3
 ```
 
 ### For Testing Specific Builds
 ```bash
-# Build once, deploy multiple times
-./build-push.sh staging build-456
-./deploy-app.sh staging build-456
+# Build app1 once, deploy multiple times
+./build-push.sh app1 staging build-456
+./deploy-app.sh app1 staging build-456
 
 # Test, then promote
-./deploy-app.sh prod build-456
+./deploy-app.sh app1 prod build-456
 ```
 
 ### For Quick Updates
 ```bash
 # If image already exists in ACR
-./deploy-app.sh dev latest
+./deploy-app.sh app1 dev latest
+./deploy-app.sh app2 dev latest
 ```
 
 ---
@@ -279,11 +304,11 @@ All scripts include:
 
 ### "Image not found in ACR"
 ```bash
-# Build and push first
-./build-push.sh dev
+# Build and push app1 first
+./build-push.sh app1 dev
 
-# Then deploy
-./deploy-app.sh dev
+# Then deploy app1
+./deploy-app.sh app1 dev
 ```
 
 ### "Infrastructure not found"

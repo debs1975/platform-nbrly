@@ -245,7 +245,7 @@ else
 fi
 
 echo ""
-echo "Retrieving DNS information for route-level binding..."
+echo "Checking DNS configuration..."
 echo ""
 
 # Get Container Apps Environment static IP address
@@ -261,13 +261,31 @@ if [ -z "$ENV_STATIC_IP" ]; then
     echo ""
     echo "Please ensure the Container Apps Environment is deployed first:"
     echo " ./scripts/03-deploy-compute.sh ${ENV}"
+    echo ""
+    echo "You can manually check the IP address using:"
+    echo " az containerapp env show \\"
+    echo "   --name ${ENV_NAME} \\"
+    echo "   --resource-group ${RG_NAME} \\"
+    echo "   --query properties.staticIp -o tsv"
     exit 1
 fi
 
 echo "✅ Retrieved static IP address: $ENV_STATIC_IP"
 
+# Get domain verification ID
+VERIFICATION_ID=$(az containerapp env show \
+    --name "$ENV_NAME" \
+    --resource-group "$RG_NAME" \
+    --query properties.customDomainConfiguration.customDomainVerificationId -o tsv 2>/dev/null)
+
+if [ -z "$VERIFICATION_ID" ]; then
+    echo "WARNING: Unable to retrieve domain verification ID"
+    echo "This may indicate custom domain configuration is not enabled on the environment"
+    VERIFICATION_ID="<verification-id-from-azure-portal>"
+fi
+
 echo ""
-echo "IMPORTANT: Configure DNS before deploying HTTP route configuration:"
+echo "IMPORTANT: Before binding the custom domain, configure DNS:"
 echo ""
 echo "DNS Records to create:"
 echo "=========================================="
@@ -275,52 +293,115 @@ echo "A Record:"
 echo " Name: ${CUSTOM_DOMAIN}"
 echo " Type: A"
 echo " Value: ${ENV_STATIC_IP}"
+echo ""
+echo "TXT Record (for validation):"
+echo " Name: asuid.${CUSTOM_DOMAIN}"
+echo " Type: TXT"
+echo " Value: ${VERIFICATION_ID}"
 echo "=========================================="
 echo ""
-echo "NOTE: Custom domain binding will be configured at the HTTP route level,"
-echo "      not at the Container Apps Environment level."
-echo "      The certificate is now available for route-level binding."
+
+read -p "Have you configured the DNS records? (yes/no): " DNS_CONFIRMED
+if [ "$DNS_CONFIRMED" != "yes" ]; then
+    echo ""
+    echo "Please configure DNS records and re-run this script."
+    echo "Script saved DNS information above."
+    exit 0
+fi
+
+echo ""
+echo "Verifying DNS propagation..."
+sleep 5
+
+# Check A record
+A_RECORD_IP=$(dig +short "$CUSTOM_DOMAIN" A | head -n 1)
+if [ -z "$A_RECORD_IP" ]; then
+    echo "WARNING: A record not found or not propagated yet."
+    echo "DNS propagation can take a few minutes to several hours."
+    echo ""
+    read -p "Continue anyway? (yes/no): " CONTINUE
+    if [ "$CONTINUE" != "yes" ]; then
+        exit 0
+    fi
+elif [ "$A_RECORD_IP" != "$ENV_STATIC_IP" ]; then
+    echo "WARNING: A record IP ($A_RECORD_IP) does not match environment static IP ($ENV_STATIC_IP)"
+    echo "Please verify your DNS configuration."
+    echo ""
+    read -p "Continue anyway? (yes/no): " CONTINUE
+    if [ "$CONTINUE" != "yes" ]; then
+        exit 0
+    fi
+else
+    echo "✅ A record verified: $CUSTOM_DOMAIN → $ENV_STATIC_IP"
+fi
+
+echo ""
+echo "Adding custom domain to Container Apps Environment..."
+EXISTING_DOMAIN=$(az containerapp env show \
+    --name "$ENV_NAME" \
+    --resource-group "$RG_NAME" \
+    --query "properties.customDomainConfiguration.dnsSuffix" -o tsv 2>/dev/null || echo "")
+
+if [ "$EXISTING_DOMAIN" == "$CUSTOM_DOMAIN" ]; then
+    echo "Custom domain already configured: $CUSTOM_DOMAIN"
+else
+    echo "Configuring custom DNS suffix for Container Apps Environment..."
+    
+    # Update the environment with custom DNS suffix
+    # Note: The certificate binding is automatic when the certificate exists in the environment
+    az containerapp env update \
+        --resource-group "$RG_NAME" \
+        --name "$ENV_NAME" \
+        --dns-suffix "$CUSTOM_DOMAIN" \
+        --output none
+    
+    echo "Custom domain configured: $CUSTOM_DOMAIN"
+    echo ""
+    echo "Note: The certificate '$CERT_NAME' is now available for binding to individual Container Apps"
+fi
 
 echo ""
 echo "=========================================="
-echo "SSL/TLS Certificate Upload Complete!"
+echo "SSL/TLS Configuration Complete!"
 echo "=========================================="
 echo "Environment: ${ENV_NAME}"
 echo "Custom Domain: ${CUSTOM_DOMAIN}"
 echo "Certificate: ${CERT_NAME}"
-echo "Static IP: ${ENV_STATIC_IP}"
 echo ""
-echo "✅ Certificate uploaded and available in Container Apps Environment"
+echo "Certificate uploaded and available in Container Apps Environment"
 echo ""
 echo "Next Steps:"
 echo "============"
 echo ""
-echo "1. Configure DNS A record:"
-echo "   Name: ${CUSTOM_DOMAIN}"
-echo "   Type: A"
-echo "   Value: ${ENV_STATIC_IP}"
+echo "1. To bind this certificate to a Container App, use:"
 echo ""
-echo "2. Deploy HTTP route configuration with custom domain binding:"
-echo "   cd /Users/debashisghosh/Documents/dev/nbrly/sample-app/scripts"
-echo "   ./deploy-routing.sh ${ENV}"
+echo "   # Add custom hostname to your Container App"
+echo "   az containerapp hostname add \\"
+echo "     --resource-group ${RG_NAME} \\"
+echo "     --name <your-app-name> \\"
+echo "     --hostname <subdomain>.${CUSTOM_DOMAIN}"
 echo ""
-echo "   This will bind the custom domain at the route level using:"
-echo "   - Certificate: ${CERT_NAME}"
-echo "   - Domain: ${CUSTOM_DOMAIN}"
+echo "   # Bind the certificate"
+echo "   az containerapp hostname bind \\"
+echo "     --resource-group ${RG_NAME} \\"
+echo "     --name <your-app-name> \\"
+echo "     --hostname <subdomain>.${CUSTOM_DOMAIN} \\"
+echo "     --environment ${ENV_NAME} \\"
+echo "     --thumbprint \$(az containerapp env certificate list \\"
+echo "       --resource-group ${RG_NAME} \\"
+echo "       --name ${ENV_NAME} \\"
+echo "       --query \"[?name=='${CERT_NAME}'].properties.thumbprint\" -o tsv)"
 echo ""
-echo "3. Verify SSL certificate after route deployment:"
-echo "   curl -v https://${CUSTOM_DOMAIN}"
-echo "   openssl s_client -connect ${CUSTOM_DOMAIN}:443"
+echo "2. Example for sample app:"
+echo "   ./sample-app/scripts/bind-custom-domain.sh ${ENV} api.${CUSTOM_DOMAIN}"
 echo ""
-echo "4. Test path-based routing:"
-echo "   curl https://${CUSTOM_DOMAIN}/app1/health"
-echo "   curl https://${CUSTOM_DOMAIN}/app2/health"
+echo "3. Verify SSL certificate:"
+echo "   curl -v https://<subdomain>.${CUSTOM_DOMAIN}"
+echo "   openssl s_client -connect <subdomain>.${CUSTOM_DOMAIN}:443"
 echo ""
-echo "5. View all certificates in environment:"
+echo "4. View all certificates in environment:"
 echo "   az containerapp env certificate list \\"
 echo "     --resource-group ${RG_NAME} \\"
 echo "     --name ${ENV_NAME} \\"
 echo "     --output table"
-echo ""
-echo "IMPORTANT: Custom domain is bound at HTTP route level, NOT at environment level."
 echo "=========================================="

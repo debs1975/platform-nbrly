@@ -1,30 +1,45 @@
 # Container Apps Environment HTTP Routing Configuration
 # This file defines rule-based routing for multiple container apps
 # Docs: https://learn.microsoft.com/en-us/azure/container-apps/rule-based-routing
-
-routes:
-  # Route /app1 prefix to the main API container app
-  - match:
-      prefix: /app1
-    action:
-      prefixRewrite: /app1
-    target:
-      containerApp: "{{PROJECT_NAME}}-{{ENV}}-eastus-api-ca"
+customDomains:
+  - name: "{{DOMAIN_NAME}}"
+    certificateId: "{{CERTIFICATE_ID}}"
+    bindingType: "SniEnabled"
+rules:
+  # Rule for App1: Route /app1 and /app1/* to the main API container app, preserving the full path
+  - description: "App 1 routing rule"
+    routes:
+      - match:
+          prefix: /app1
+    targets:
+      - containerApp: "{{PROJECT_NAME}}-{{ENV}}-{{REGION}}-app1-ca"
   
-  # Route /app2 prefix to the second API container app
-  - match:
-      prefix: /app2
-    action:
-      prefixRewrite: /app2
-    target:
-      containerApp: "{{PROJECT_NAME}}-{{ENV}}-eastus-api2-ca"
+  # Rule for App2: Route /app2 prefix to the second API container app
+  - description: "App 2 routing rule"
+    routes:
+      - match:
+          prefix: /app2
+    targets:
+      - containerApp: "{{PROJECT_NAME}}-{{ENV}}-{{REGION}}-app2-ca"
 
 # Notes:
-# - All requests to the environment FQDN are matched against these rules
+# - Schema requires top-level "rules" property (not "routes")
+# - Each rule contains: description, routes[], and targets[]
 # - Routes are evaluated in order (first match wins)
-# - prefixRewrite allows you to modify the path sent to the target app
-# - Container apps must exist in the same environment
-# - Both apps use their respective root paths (/app1 and /app2)
-# - Container app names updated to comply with 32-character limit:
-#   - App1: {{PROJECT_NAME}}-{{ENV}}-eastus-api-ca (e.g., nbrly-dev-eastus-api-ca)
-#   - App2: {{PROJECT_NAME}}-{{ENV}}-eastus-api2-ca (e.g., nbrly-dev-eastus-api2-ca)
+# - prefixRewrite: "/" strips the /app1 or /app2 prefix before forwarding to the target app
+#   (e.g., /app1/health becomes /health at the target container app)
+# - Container apps must exist in the same environment before deploying routing
+#
+# Placeholder Variables (replaced by deploy-routing.sh):
+#   {{PROJECT_NAME}} - Project name from infra-config (e.g., nbrly)
+#   {{ENV}}          - Environment from infra-config (e.g., dev, staging, prod)
+#   {{REGION}}       - Azure region from infra-config (e.g., eastus)
+#
+# Example Generated Names:
+#   - App1: nbrly-dev-eastus-app1-ca
+#   - App2: nbrly-dev-eastus-app2-ca
+#
+# Container App Naming Convention:
+#   {projectName}-{environment}-{region}-{appSuffix}-ca
+#   - app1-ca: First application
+#   - app2-ca: Second application

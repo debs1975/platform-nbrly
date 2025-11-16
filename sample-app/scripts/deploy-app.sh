@@ -4,35 +4,56 @@ set -e
 # ============================================================================
 # Script: deploy-app.sh
 # Purpose: Deploy Container App to Azure Container Apps (without building image)
-# Usage: ./deploy-app.sh [environment] [image-tag] [app-name]
+# Usage: ./deploy-app.sh [environment] <app-name> [image-tag]
 # ============================================================================
 
 ENVIRONMENT=${1:-dev}
-CUSTOM_TAG=${2:-}
-APP_NAME_PARAM=${3:-app}
+APP_NAME_PARAM=${2}
+CUSTOM_TAG=${3:-}
+
+# Validate required parameter
+if [[ -z "$APP_NAME_PARAM" ]]; then
+    echo "ERROR: Application name is required"
+    echo ""
+    echo "Usage: ./deploy-app.sh [environment] <app-name> [image-tag]"
+    echo ""
+    echo "Arguments:"
+    echo "  environment  : Optional - Deployment environment (dev, staging, prod) [default: dev]"
+    echo "  app-name     : REQUIRED - Application name (app1 or app2)"
+    echo "  image-tag    : Optional - Custom image tag [default: latest]"
+    echo ""
+    echo "Examples:"
+    echo "  ./deploy-app.sh dev app1"
+    echo "  ./deploy-app.sh dev app2 v1.2.3"
+    echo "  ./deploy-app.sh prod app1 latest"
+    exit 1
+fi
 
 # Determine config file based on app name
 if [ "$APP_NAME_PARAM" = "app2" ]; then
     CONFIG_PREFIX="app2"
+elif [ "$APP_NAME_PARAM" = "app1" ]; then
+    CONFIG_PREFIX="app1"
 else
-    CONFIG_PREFIX="app"
-    APP_NAME_PARAM="app"
-fi
-
-# Load infrastructure and application configuration
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INFRA_CONFIG_FILE="${SCRIPT_DIR}/../../iac-cli/config/parameters-${ENVIRONMENT}.json"
-APP_CONFIG_FILE="${SCRIPT_DIR}/../config/${CONFIG_PREFIX}-config-${ENVIRONMENT}.json"
-
-if [ ! -f "$INFRA_CONFIG_FILE" ]; then
-    echo "ERROR: Infrastructure configuration file not found: $INFRA_CONFIG_FILE"
-    echo "Usage: ./deploy-app.sh [dev|staging|prod] [image-tag] [app|app2]"
+    echo "ERROR: Invalid app name: $APP_NAME_PARAM"
+    echo "Valid options are: app1, app2"
     exit 1
 fi
 
+# Load configuration only from sample-app/config
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_CONFIG_FILE="${SCRIPT_DIR}/../config/${CONFIG_PREFIX}-config-${ENVIRONMENT}.json"
+INFRA_CONFIG_FILE="${SCRIPT_DIR}/../config/infra-config-${ENVIRONMENT}.json"
+
 if [ ! -f "$APP_CONFIG_FILE" ]; then
     echo "ERROR: Application configuration file not found: $APP_CONFIG_FILE"
-    echo "Usage: ./deploy-app.sh [dev|staging|prod] [image-tag] [app|app2]"
+    echo "Usage: ./deploy-app.sh <app-name> [environment] [image-tag]"
+    exit 1
+fi
+
+if [ ! -f "$INFRA_CONFIG_FILE" ]; then
+    echo "ERROR: Infrastructure configuration file not found: $INFRA_CONFIG_FILE"
+    echo "Usage: ./deploy-app.sh <app-name> [environment] [image-tag]"
     exit 1
 fi
 
@@ -43,39 +64,61 @@ if ! command -v jq &> /dev/null; then
     exit 1
 fi
 
-# Extract variables from infrastructure config
+# Extract all variables from unified application config
 PROJECT_NAME=$(jq -r '.projectName' "$INFRA_CONFIG_FILE")
 ENV=$(jq -r '.environment' "$INFRA_CONFIG_FILE")
 LOCATION=$(jq -r '.location' "$INFRA_CONFIG_FILE")
 SUBSCRIPTION_ID=$(jq -r '.subscriptionId' "$INFRA_CONFIG_FILE")
 
-# Extract variables from application config
-DEFAULT_IMAGE_TAG=$(jq -r '.container.image.tag' "$APP_CONFIG_FILE")
+# Validate required infrastructure parameters
+if [ "$SUBSCRIPTION_ID" = "" ] || [ "$SUBSCRIPTION_ID" = "null" ]; then
+    echo "ERROR: subscriptionId must be specified in config file"
+    echo "Add 'subscriptionId' to the infrastructure section of $APP_CONFIG_FILE"
+    exit 1
+fi
+
+# Extract container and application configuration
+DEFAULT_IMAGE_TAG=$(jq -r '.container.image.tag // "latest"' "$APP_CONFIG_FILE")
 IMAGE_NAME=$(jq -r '.container.image.name' "$APP_CONFIG_FILE")
-CONTAINER_CPU=$(jq -r '.container.resources.cpu' "$APP_CONFIG_FILE")
-CONTAINER_MEMORY=$(jq -r '.container.resources.memory' "$APP_CONFIG_FILE")
-CONTAINER_PORT=$(jq -r '.container.port' "$APP_CONFIG_FILE")
-MIN_REPLICAS=$(jq -r '.scaling.minReplicas' "$APP_CONFIG_FILE")
-MAX_REPLICAS=$(jq -r '.scaling.maxReplicas' "$APP_CONFIG_FILE")
-HTTP_CONCURRENT_REQUESTS=$(jq -r '.scaling.rules.http.concurrentRequests' "$APP_CONFIG_FILE")
+CONTAINER_CPU=$(jq -r '.container.resources.cpu // "0.25"' "$APP_CONFIG_FILE")
+CONTAINER_MEMORY=$(jq -r '.container.resources.memory // "0.5Gi"' "$APP_CONFIG_FILE")
+CONTAINER_PORT=$(jq -r '.container.port // "8080"' "$APP_CONFIG_FILE")
+MIN_REPLICAS=$(jq -r '.scaling.minReplicas // "0"' "$APP_CONFIG_FILE")
+MAX_REPLICAS=$(jq -r '.scaling.maxReplicas // "10"' "$APP_CONFIG_FILE")
+HTTP_CONCURRENT_REQUESTS=$(jq -r '.scaling.rules.http.concurrentRequests // "10"' "$APP_CONFIG_FILE")
 APP_NAME_SUFFIX=$(jq -r '.application.name' "$APP_CONFIG_FILE")
 
 # Use custom tag if provided, otherwise use default from config
 IMAGE_TAG=${CUSTOM_TAG:-$DEFAULT_IMAGE_TAG}
 
 # ============================================================================
-# Azure Authentication
+# Azure Authentication - Use inline authentication
 # ============================================================================
-source "${SCRIPT_DIR}/../../iac-cli/scripts/helpers/azure-login.sh"
-azure_login "$ENV"
+echo "Authenticating with Azure..."
+
+# Check if already logged in
+if ! az account show &>/dev/null; then
+    echo "Not logged in to Azure. Please run 'az login' first."
+    exit 1
+fi
+
+# Set subscription if specified
+if [ -n "$SUBSCRIPTION_ID" ] && [ "$SUBSCRIPTION_ID" != "null" ]; then
+    echo "Setting subscription: $SUBSCRIPTION_ID"
+    az account set --subscription "$SUBSCRIPTION_ID"
+fi
+
+# Verify subscription
+CURRENT_SUB=$(az account show --query id -o tsv)
+echo "Using subscription: $CURRENT_SUB"
 
 # Construct resource names (lowercase)
-RG_NAME="${PROJECT_NAME}-${ENV}-eastus-rg"
-ACR_NAME="${PROJECT_NAME}${ENV}eastusacr"
-CAE_NAME="${PROJECT_NAME}-${ENV}-eastus-cae"
-APP_NAME="${PROJECT_NAME}-${ENV}-eastus-${APP_NAME_SUFFIX}-ca"
-UAMI_NAME="${PROJECT_NAME}-${ENV}-eastus-uami"
-KV_NAME="${PROJECT_NAME}${ENV}eastuskv"
+RG_NAME=$(jq -r '.resourceGroup.name' "$INFRA_CONFIG_FILE")
+ACR_NAME=$(jq -r '.acr.name' "$INFRA_CONFIG_FILE")
+CAE_NAME=$(jq -r '.containerAppsEnvironment.name' "$INFRA_CONFIG_FILE")
+APP_NAME="${PROJECT_NAME}-${ENV}-${LOCATION}-${APP_NAME_SUFFIX}-ca"
+UAMI_NAME=$(jq -r '.managedIdentity.name' "$INFRA_CONFIG_FILE")
+KV_NAME=$(jq -r '.keyVault.name' "$INFRA_CONFIG_FILE")
 
 # Full image name
 FULL_IMAGE_NAME="${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}"
@@ -98,19 +141,19 @@ echo "Verifying infrastructure..."
 
 if ! az group show --name "$RG_NAME" &>/dev/null; then
     echo "ERROR: Resource group '${RG_NAME}' not found"
-    echo "Run infrastructure deployment: ./iac-cli/scripts/01-deploy-networking.sh ${ENV}"
+    echo "Please ensure the infrastructure is deployed first"
     exit 1
 fi
 
 if ! az acr show --name "$ACR_NAME" --resource-group "$RG_NAME" &>/dev/null; then
     echo "ERROR: Container Registry '${ACR_NAME}' not found"
-    echo "Run compute deployment: ./iac-cli/scripts/03-deploy-compute.sh ${ENV}"
+    echo "Please ensure the container registry is deployed"
     exit 1
 fi
 
 if ! az containerapp env show --name "$CAE_NAME" --resource-group "$RG_NAME" &>/dev/null; then
     echo "ERROR: Container Apps Environment '${CAE_NAME}' not found"
-    echo "Run compute deployment: ./iac-cli/scripts/03-deploy-compute.sh ${ENV}"
+    echo "Please ensure the container apps environment is deployed"
     exit 1
 fi
 
@@ -159,14 +202,15 @@ if [ -z "$APP_EXISTS" ]; then
         --registry-server "${ACR_NAME}.azurecr.io" \
         --registry-identity "$UAMI_ID" \
         --target-port "$CONTAINER_PORT" \
-        --ingress external \
+        --ingress internal \
+        --transport http \
         --cpu "$CONTAINER_CPU" \
         --memory "$CONTAINER_MEMORY" \
         --min-replicas "$MIN_REPLICAS" \
         --max-replicas "$MAX_REPLICAS" \
         --env-vars \
             "ENVIRONMENT=${ENV}" \
-            "LOG_LEVEL=$(jq -r '.environmentVariables.LOG_LEVEL' "$APP_CONFIG_FILE")" \
+            "LOG_LEVEL=$(jq -r '.environmentVariables.LOG_LEVEL // "INFO"' "$APP_CONFIG_FILE")" \
             "PORT=${CONTAINER_PORT}" \
             "AZURE_CLIENT_ID=${UAMI_CLIENT_ID}" \
             "DATABASE_URL=secretref:postgres-connection-string" \
@@ -177,6 +221,7 @@ if [ -z "$APP_EXISTS" ]; then
         --tags "Environment=${ENV}" "Project=${PROJECT_NAME}" "Application=${APP_NAME_SUFFIX}"
     
     echo "✓ Container App created successfully"
+    echo "ℹ️  Ingress: internal (accessible via environment gateway only)"
 else
     echo "Updating existing Container App..."
     
@@ -190,6 +235,14 @@ else
         --max-replicas "$MAX_REPLICAS"
     
     echo "✓ Container App updated successfully"
+    echo ""
+    echo "⚠️  Note: To enable internal ingress for path-based routing, run:"
+    echo "   az containerapp ingress update \\"
+    echo "     --name $APP_NAME \\"
+    echo "     --resource-group $RG_NAME \\"
+    echo "     --type internal \\"
+    echo "     --target-port $CONTAINER_PORT \\"
+    echo "     --transport http"
 fi
 
 # Get application URL
@@ -212,6 +265,25 @@ else
     ROOT_PATH="/app1"
 fi
 
+# Get ingress type
+INGRESS_TYPE=$(az containerapp show \
+    --resource-group "$RG_NAME" \
+    --name "$APP_NAME" \
+    --query "properties.configuration.ingress.external" -o tsv)
+
+if [ "$INGRESS_TYPE" = "false" ]; then
+    INGRESS_INFO="Internal (via environment gateway only)"
+    CUSTOM_DOMAIN=$(jq -r '.customDomain.domainName // empty' "$INFRA_CONFIG_FILE")
+    if [ -n "$CUSTOM_DOMAIN" ]; then
+        GATEWAY_URL="https://${CUSTOM_DOMAIN}${ROOT_PATH}"
+    else
+        GATEWAY_URL="<custom-domain>${ROOT_PATH} (configure custom domain first)"
+    fi
+else
+    INGRESS_INFO="External (direct access)"
+    GATEWAY_URL="https://${APP_FQDN}${ROOT_PATH}"
+fi
+
 echo ""
 echo "=========================================="
 echo "Deployment Complete!"
@@ -219,17 +291,24 @@ echo "=========================================="
 echo "Container App:  ${APP_NAME}"
 echo "Image:          ${FULL_IMAGE_NAME}"
 echo "Revision:       ${REVISION}"
-echo "URL:            https://${APP_FQDN}"
+echo "Ingress:        ${INGRESS_INFO}"
 echo ""
-echo "Test endpoints:"
-echo "  Health:       https://${APP_FQDN}${ROOT_PATH}/health"
-echo "  Readiness:    https://${APP_FQDN}${ROOT_PATH}/health/ready"
-echo "  Liveness:     https://${APP_FQDN}${ROOT_PATH}/health/live"
-echo "  Info:         https://${APP_FQDN}${ROOT_PATH}/api/info"
-echo "  API Docs:     https://${APP_FQDN}${ROOT_PATH}/docs"
+echo "Internal URL:   https://${APP_FQDN}"
+echo "Gateway URL:    ${GATEWAY_URL}"
+echo ""
+echo "Test endpoints (via gateway):"
+echo "  Health:       ${GATEWAY_URL}/health"
+echo "  Readiness:    ${GATEWAY_URL}/health/ready"
+echo "  Liveness:     ${GATEWAY_URL}/health/live"
+echo "  Info:         ${GATEWAY_URL}/api/info"
+echo "  API Docs:     ${GATEWAY_URL}/docs"
 if [ "$APP_NAME_PARAM" = "app2" ]; then
-    echo "  Tasks:        https://${APP_FQDN}${ROOT_PATH}/api/tasks"
+    echo "  Tasks:        ${GATEWAY_URL}/api/tasks"
 fi
+echo ""
+echo "ℹ️  Note: For path-based routing to work:"
+echo "   1. Deploy routing rules: cd scripts && ./deploy-routing.sh ${ENVIRONMENT}"
+echo "   2. Ensure custom domain is assigned: cd ../../iac-cli && ./scripts/06-deploy-ssl.sh ${ENVIRONMENT}"
 echo ""
 echo "Management commands:"
 echo "  View logs:"

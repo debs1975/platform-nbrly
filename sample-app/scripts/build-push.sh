@@ -4,39 +4,60 @@ set -e
 # ============================================================================
 # Script: build-push.sh
 # Purpose: Build Docker image and push to Azure Container Registry
-# Usage: ./build-push.sh [environment] [tag] [app]
+# Usage: ./build-push.sh [environment] <app-name> [tag]
 # ============================================================================
 
 ENVIRONMENT=${1:-dev}
-CUSTOM_TAG=${2:-}
-APP_NAME=${3:-app}
+APP_NAME=${2}
+CUSTOM_TAG=${3:-}
+
+# Validate required parameter
+if [[ -z "$APP_NAME" ]]; then
+    echo "ERROR: Application name is required"
+    echo ""
+    echo "Usage: ./build-push.sh [environment] <app-name> [tag]"
+    echo ""
+    echo "Arguments:"
+    echo "  environment  : Optional - Build environment (dev, staging, prod) [default: dev]"
+    echo "  app-name     : REQUIRED - Application name (app1 or app2)"
+    echo "  tag          : Optional - Custom image tag [default: from config file]"
+    echo ""
+    echo "Examples:"
+    echo "  ./build-push.sh dev app1"
+    echo "  ./build-push.sh dev app2 v1.2.3"
+    echo "  ./build-push.sh prod app1 latest"
+    exit 1
+fi
 
 # Determine which app to build
 if [ "$APP_NAME" = "app2" ]; then
     CONFIG_PREFIX="app2"
     DOCKERFILE="Dockerfile.app2"
     IMAGE_SUFFIX="app2"
-else
-    CONFIG_PREFIX="app"
-    APP_NAME="app"
+elif [ "$APP_NAME" = "app1" ]; then
+    CONFIG_PREFIX="app1"
     DOCKERFILE="Dockerfile.app1"
     IMAGE_SUFFIX="app1"
-fi
-
-# Load infrastructure and application configuration
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INFRA_CONFIG_FILE="${SCRIPT_DIR}/../../iac-cli/config/parameters-${ENVIRONMENT}.json"
-APP_CONFIG_FILE="${SCRIPT_DIR}/../config/${CONFIG_PREFIX}-config-${ENVIRONMENT}.json"
-
-if [ ! -f "$INFRA_CONFIG_FILE" ]; then
-    echo "ERROR: Infrastructure configuration file not found: $INFRA_CONFIG_FILE"
-    echo "Usage: ./build-push.sh [dev|staging|prod] [custom-tag] [app|app2]"
+else
+    echo "ERROR: Invalid app name: $APP_NAME"
+    echo "Valid options are: app1, app2"
     exit 1
 fi
 
+# Load application configuration from sample-app folder only
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_CONFIG_FILE="${SCRIPT_DIR}/../config/${CONFIG_PREFIX}-config-${ENVIRONMENT}.json"
+INFRA_CONFIG_FILE="${SCRIPT_DIR}/../config/infra-config-${ENVIRONMENT}.json"
+
 if [ ! -f "$APP_CONFIG_FILE" ]; then
     echo "ERROR: Application configuration file not found: $APP_CONFIG_FILE"
-    echo "Usage: ./build-push.sh [dev|staging|prod] [custom-tag] [app|app2]"
+    echo "Usage: ./build-push.sh <app-name> [environment] [tag]"
+    exit 1
+fi
+
+if [ ! -f "$INFRA_CONFIG_FILE" ]; then
+    echo "ERROR: Infrastructure configuration file not found: $INFRA_CONFIG_FILE"
+    echo "Usage: ./build-push.sh <app-name> [environment] [tag]"
     exit 1
 fi
 
@@ -52,13 +73,34 @@ if ! command -v jq &> /dev/null; then
     exit 1
 fi
 
-# Extract variables from infrastructure config
+# Extract variables from application config
 PROJECT_NAME=$(jq -r '.projectName' "$INFRA_CONFIG_FILE")
 ENV=$(jq -r '.environment' "$INFRA_CONFIG_FILE")
-
-# Extract variables from application config
 DEFAULT_IMAGE_TAG=$(jq -r '.container.image.tag' "$APP_CONFIG_FILE")
 IMAGE_NAME=$(jq -r '.container.image.name' "$APP_CONFIG_FILE")
+ACR_NAME=$(jq -r '.acr.name' "$INFRA_CONFIG_FILE")
+RG_NAME=$(jq -r '.resourceGroup.name' "$INFRA_CONFIG_FILE")
+
+# Validate required configuration values
+if [ "$PROJECT_NAME" = "null" ] || [ -z "$PROJECT_NAME" ]; then
+    echo "ERROR: 'projectName' not found in configuration file: $APP_CONFIG_FILE"
+    exit 1
+fi
+
+if [ "$ENV" = "null" ] || [ -z "$ENV" ]; then
+    echo "ERROR: 'environment' not found in configuration file: $APP_CONFIG_FILE"
+    exit 1
+fi
+
+if [ "$ACR_NAME" = "null" ] || [ -z "$ACR_NAME" ]; then
+    echo "ERROR: 'infrastructure.acr.name' not found in configuration file: $APP_CONFIG_FILE"
+    exit 1
+fi
+
+if [ "$RG_NAME" = "null" ] || [ -z "$RG_NAME" ]; then
+    echo "ERROR: 'infrastructure.resourceGroup.name' not found in configuration file: $APP_CONFIG_FILE"
+    exit 1
+fi
 
 # Use custom tag if provided, otherwise use default from config
 IMAGE_TAG=${CUSTOM_TAG:-$DEFAULT_IMAGE_TAG}
@@ -68,10 +110,6 @@ IMAGE_TAG=${CUSTOM_TAG:-$DEFAULT_IMAGE_TAG}
 # ============================================================================
 source "${SCRIPT_DIR}/../../iac-cli/scripts/helpers/azure-login.sh"
 azure_login "$ENV"
-
-# Construct resource names (lowercase)
-RG_NAME="${PROJECT_NAME}-${ENV}-eastus-rg"
-ACR_NAME="${PROJECT_NAME}${ENV}eastusacr"
 
 # Full image name
 FULL_IMAGE_NAME="${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}"
@@ -94,7 +132,7 @@ echo "Verifying Azure Container Registry..."
 
 if ! az acr show --name "$ACR_NAME" --resource-group "$RG_NAME" &>/dev/null; then
     echo "ERROR: Container Registry '${ACR_NAME}' not found in resource group '${RG_NAME}'"
-    echo "Run infrastructure deployment first: ./iac-cli/scripts/03-deploy-compute.sh ${ENV}"
+    echo "Ensure infrastructure is deployed and configuration is correct"
     exit 1
 fi
 

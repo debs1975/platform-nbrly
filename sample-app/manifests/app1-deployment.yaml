@@ -1,0 +1,197 @@
+# ============================================================================
+# Azure Container App Deployment - App1
+# ============================================================================
+# This YAML file defines the complete configuration for deploying App1
+# to Azure Container Apps.
+#
+# Usage:
+#   az containerapp create --resource-group <RG> --yaml app1-deployment.yaml
+#   az containerapp update --name <APP> --resource-group <RG> --yaml app1-deployment.yaml
+#
+# Variables to replace before deployment:
+#   {{PROJECT_NAME}}          - Project name (e.g., nbrly)
+#   {{ENV}}                   - Environment (dev, staging, prod)
+#   {{REGION}}                - Azure region (e.g., eastus)
+#   {{SUBSCRIPTION_ID}}       - Azure subscription ID
+#   {{RESOURCE_GROUP}}        - Resource group name
+#   {{CAE_NAME}}              - Container Apps Environment name
+#   {{IMAGE_NAME}}            - Container image name (e.g., app1)
+#   {{IMAGE_TAG}}             - Image tag (e.g., latest, v1.0.0)
+#   {{ACR_NAME}}              - Azure Container Registry name
+#   {{UAMI_ID}}               - User-assigned managed identity resource ID
+#   {{UAMI_CLIENT_ID}}        - Managed identity client ID
+#   {{KV_NAME}}               - Key Vault name
+#   {{CONTAINER_PORT}}        - Container port (default: 8080)
+#   {{CONTAINER_CPU}}         - CPU allocation (default: 0.25)
+#   {{CONTAINER_MEMORY}}      - Memory allocation (default: 0.5Gi)
+#   {{MIN_REPLICAS}}          - Minimum replicas (default: 0)
+#   {{MAX_REPLICAS}}          - Maximum replicas (default: 10)
+#   {{HTTP_CONCURRENT_REQUESTS}} - Concurrent requests for scaling (default: 10)
+#   {{LOG_LEVEL}}             - Application log level (default: INFO)
+# ============================================================================
+
+properties:
+  # ============================================================================
+  # Container Apps Environment Reference
+  # ============================================================================
+  environmentId: /subscriptions/{{SUBSCRIPTION_ID}}/resourceGroups/{{RESOURCE_GROUP}}/providers/Microsoft.App/managedEnvironments/{{CAE_NAME}}
+  
+  # ============================================================================
+  # Configuration
+  # ============================================================================
+  configuration:
+    # Active revisions mode (single = only one active revision)
+    activeRevisionsMode: single
+    
+    # Ingress configuration - INTERNAL for path-based routing via HTTP route config
+    ingress:
+      external: false         # Internal ingress - accessible via environment gateway only
+      targetPort: {{CONTAINER_PORT}}
+      transport: http         # HTTP transport (environment gateway handles HTTPS)
+      allowInsecure: false    # Do not allow HTTP (even though transport is http, gateway enforces HTTPS)
+      traffic:
+        - latestRevision: true
+          weight: 100
+      
+      # NOTE: Custom domain binding is configured at HTTP route level (routing.yaml)
+      # Do NOT add customDomains here - it will conflict with route-level binding
+    
+    # Registry configuration with managed identity
+    registries:
+      - server: {{ACR_NAME}}.azurecr.io
+        identity: {{UAMI_ID}}
+    
+    # Secrets from Key Vault
+    secrets:
+      - name: postgres-connection-string
+        keyVaultUrl: https://{{KV_NAME}}.vault.azure.net/secrets/postgres-connection-string
+        identity: {{UAMI_ID}}
+      
+      - name: api-secret-key
+        keyVaultUrl: https://{{KV_NAME}}.vault.azure.net/secrets/api-secret-key
+        identity: {{UAMI_ID}}
+  
+  # ============================================================================
+  # Template (Container and Scaling Configuration)
+  # ============================================================================
+  template:
+    # Container configuration
+    containers:
+      - name: app1
+        image: {{ACR_NAME}}.azurecr.io/{{IMAGE_NAME}}:{{IMAGE_TAG}}
+        resources:
+          cpu: {{CONTAINER_CPU}}
+          memory: {{CONTAINER_MEMORY}}
+        
+        # Environment variables
+        env:
+          - name: ENVIRONMENT
+            value: "{{ENV}}"
+          
+          - name: PROJECT_NAME
+            value: "{{PROJECT_NAME}}"
+          
+          - name: APP_NAME
+            value: "app1"
+          
+          # Database connection (from Key Vault secret)
+          - name: DATABASE_URL
+            secretRef: postgres-connection-string
+          
+          # API secret key (from Key Vault secret)
+          - name: SECRET_KEY
+            secretRef: api-secret-key
+          
+          # Azure-specific configurations
+          - name: AZURE_CLIENT_ID
+            value: "{{UAMI_CLIENT_ID}}"
+          
+          # Application settings
+          - name: LOG_LEVEL
+            value: "{{LOG_LEVEL}}"
+          
+          - name: PORT
+            value: "{{CONTAINER_PORT}}"
+        
+        # Health probes
+        probes:
+          # Liveness probe - restart container if this fails
+          - type: liveness
+            httpGet:
+              path: /health
+              port: {{CONTAINER_PORT}}
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          
+          # Readiness probe - don't send traffic if this fails
+          - type: readiness
+            httpGet:
+              path: /health
+              port: {{CONTAINER_PORT}}
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 3
+          
+          # Startup probe - for slow-starting apps
+          - type: startup
+            httpGet:
+              path: /health
+              port: {{CONTAINER_PORT}}
+              scheme: HTTP
+            initialDelaySeconds: 0
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 30
+    
+    # Scaling configuration
+    scale:
+      minReplicas: {{MIN_REPLICAS}}
+      maxReplicas: {{MAX_REPLICAS}}
+      
+      # Auto-scaling rules
+      rules:
+        # HTTP request-based scaling
+        - name: http-rule
+          http:
+            metadata:
+              concurrentRequests: "{{HTTP_CONCURRENT_REQUESTS}}"
+
+# ============================================================================
+# Identity Configuration
+# ============================================================================
+identity:
+  type: UserAssigned
+  userAssignedIdentities:
+    "{{UAMI_ID}}": {}
+
+# ============================================================================
+# Tags
+# ============================================================================
+tags:
+  Environment: "{{ENV}}"
+  Project: "{{PROJECT_NAME}}"
+  Application: "app1"
+  ManagedBy: "YAML-Deployment"
+  CreatedDate: "{{CREATED_DATE}}"
+
+# ============================================================================
+# Deployment Notes
+# ============================================================================
+# 
+# 1. This Container App uses INTERNAL ingress for path-based routing
+# 2. Custom domain binding is configured at HTTP route level (see routing.yaml)
+# 3. Access pattern: https://nbrly-dev.astrapia.io/app1 → routes to this app
+# 4. Managed identity provides access to:
+#    - Azure Container Registry (for image pull)
+#    - Key Vault (for secrets and certificates)
+# 5. Health endpoints should be implemented at /health in the application
+# 
+# ============================================================================
