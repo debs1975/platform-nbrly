@@ -21,7 +21,7 @@ show_login_details() {
 azure_login() {
   # Determine the path to the credentials file relative to this script's location.
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
-  CRED_FILE_PATH="${SCRIPT_DIR}/../../creds/azure-credentials-dev.cred"
+  CRED_FILE_PATH="${SCRIPT_DIR}/../creds/azure-credentials-dev.cred"
 
   # Attempt Service Principal login if the credentials file exists
   if [ -f "$CRED_FILE_PATH" ]; then
