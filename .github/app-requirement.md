@@ -13,15 +13,28 @@
 create a folder as app-gtway-apps
 
 - create the scripts to 
-    - create 2 python apps(fast api) as nbapp1 and nbapp2 in app-gtway-apps/nbrly.
-    - root url should be /nbapp1 and /nbapp2 respectively
-    - create 2 python apps(fast api) as bmapp1 and bmapp2 in app-gtway-apps/bloom.
-    - root url should be /bmapp1 and /bmapp2 respectively
+    - create 2 python apps(fast api) as nbapp1 and nbapp2 in the folder app-gtway-apps/nbrly.
+    - root url for nbapp1 and nbapp2 in the fastapi code should be /app1 and /app2 respectively
+    - create 2 python apps(fast api) as bmapp1 and bmapp2 in the folder app-gtway-apps/bloom.
+    - root url for bmapp1 and bmapp2 in the fastapi code should be /app1 and /app2 respectively
+- expected network flow should be as below:
+    - domain based routing at application gateway
+          - For The DNS should resolve to the application gateway both for https://nbrly-dev.astrapia.io/app1 and         https://bloom-dev.astrapia.io/app1
+          - container env routing for container app env(tenantName): nbrly as per the respective domain nbrly-dev.astrapia.io
+          - container env routing for container app env(tenantName): bloom as per the respective domain bloom-dev.astrapia.io
+    - for URL: https://nbrly-dev.astrapia.io/app1
+          - The DNS should resolve to the application gateway
+          - The application gateway should route the request to tenantName: nbrly container app environment
+          - The tenantName: nbrly container app env should resolve it to container app hosting nbapp1 ( this should be done at              the route of the container app env.)
+    - for URL: https://bloom-dev.astrapia.io/app1
+          - The DNS should resolve to the application gateway
+          - The application gateway should route the request to tenantName: bloom container app environment
+          - The tenantName: bloom container app env should resolve it to container app hosting bmapp1 ( this should be done at              the route of the container app env.)
+    
 - create the scripts to 
     - docker build and push to acr for nbapp1 and nbapp2 
     - docker build and push to acr for bmapp1 and bmapp2 
-    - nbapp1 and nbapp2 to be deployed in container app env: nbrly.
-    - bmapp1 and bmapp2 to be deployed in container app env: bloom.
-    - container env routing for container app env: nbrly as per the respective domain (example nbrly-dev.astrapia.io)
-    - container env routing for container app env: nbrly as per the respective domain (example bloom-dev.astrapia.io)
+    - nbapp1 and nbapp2 to be deployed in container app env(tenantName): nbrly.
+    - bmapp1 and bmapp2 to be deployed in container app env(tenantName): bloom.
+    
 - follow the naming convention as mentioned in azure-ca-appgtwy.md
