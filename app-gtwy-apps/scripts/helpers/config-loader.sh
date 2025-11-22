@@ -1,0 +1,378 @@
+#!/bin/bash
+
+# Configuration Loader Helper
+# Provides functions to load and parse JSON configuration files
+
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_DIR="$(cd "$SCRIPT_DIR/../../config" && pwd)"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Check if jq is installed
+check_jq() {
+    if ! command -v jq &> /dev/null; then
+        echo -e "${RED}Error: jq is not installed. Please install it first.${NC}" >&2
+        echo "  macOS: brew install jq" >&2
+        echo "  Ubuntu/Debian: sudo apt-get install jq" >&2
+        echo "  RHEL/CentOS: sudo yum install jq" >&2
+        return 1
+    fi
+    return 0
+}
+
+# Load global configuration
+load_global_config() {
+    local env="${1:-dev}"
+    local config_file="$CONFIG_DIR/parameters-${env}.json"
+    
+    if [ ! -f "$config_file" ]; then
+        echo -e "${RED}Error: Global configuration file not found: $config_file${NC}" >&2
+        return 1
+    fi
+    
+    if ! jq empty "$config_file" 2>/dev/null; then
+        echo -e "${RED}Error: Invalid JSON in global configuration: $config_file${NC}" >&2
+        return 1
+    fi
+    
+    echo "$config_file"
+    return 0
+}
+
+# Load tenant configuration
+load_tenant_config() {
+    local tenant="$1"
+    local env="${2:-dev}"
+    local config_file="$CONFIG_DIR/${tenant}/parameters-${env}.json"
+    
+    if [ ! -f "$config_file" ]; then
+        echo -e "${RED}Error: Tenant configuration file not found: $config_file${NC}" >&2
+        return 1
+    fi
+    
+    if ! jq empty "$config_file" 2>/dev/null; then
+        echo -e "${RED}Error: Invalid JSON in tenant configuration: $config_file${NC}" >&2
+        return 1
+    fi
+    
+    echo "$config_file"
+    return 0
+}
+
+# Get value from global configuration
+get_global_value() {
+    local env="${1}"
+    local json_path="${2}"
+    local default_value="${3:-}"
+    
+    local config_file
+    config_file=$(load_global_config "$env") || return 1
+    
+    local value
+    value=$(jq -r "${json_path}" "$config_file" 2>/dev/null)
+    
+    if [ -z "$value" ] || [ "$value" == "null" ]; then
+        if [ -n "$default_value" ]; then
+            echo "$default_value"
+        else
+            echo -e "${YELLOW}Warning: Value not found for path: ${json_path}${NC}" >&2
+            return 1
+        fi
+    else
+        echo "$value"
+    fi
+}
+
+# Get value from tenant configuration
+get_tenant_value() {
+    local tenant="${1}"
+    local env="${2}"
+    local json_path="${3}"
+    local default_value="${4:-}"
+    
+    local config_file
+    config_file=$(load_tenant_config "$tenant" "$env") || return 1
+    
+    local value
+    value=$(jq -r "${json_path}" "$config_file" 2>/dev/null)
+    
+    if [ -z "$value" ] || [ "$value" == "null" ]; then
+        if [ -n "$default_value" ]; then
+            echo "$default_value"
+        else
+            echo -e "${YELLOW}Warning: Value not found for path: ${json_path}${NC}" >&2
+            return 1
+        fi
+    else
+        echo "$value"
+    fi
+}
+
+# Get all application names for a tenant
+get_tenant_applications() {
+    local tenant="${1}"
+    local env="${2:-dev}"
+    
+    local config_file
+    config_file=$(load_tenant_config "$tenant" "$env") || return 1
+    
+    jq -r '.applications | keys[]' "$config_file"
+}
+
+# Get application configuration
+get_app_config() {
+    local tenant="${1}"
+    local app_name="${2}"
+    local env="${3:-dev}"
+    local property="${4}"
+    
+    local json_path=".applications.${app_name}.${property}"
+    get_tenant_value "$tenant" "$env" "$json_path"
+}
+
+# Export configuration as environment variables
+export_global_config() {
+    local env="${1:-dev}"
+    
+    check_jq || return 1
+    
+    local config_file
+    config_file=$(load_global_config "$env") || return 1
+    
+    export CONFIG_ENV=$(jq -r '.env' "$config_file")
+    export CONFIG_REGION=$(jq -r '.region' "$config_file")
+    export CONFIG_PROJECT=$(jq -r '.project' "$config_file")
+    export CONFIG_RESOURCE_GROUP=$(jq -r '.resourceGroup' "$config_file")
+    export CONFIG_CONTAINER_REGISTRY=$(jq -r '.containerRegistry' "$config_file")
+    export CONFIG_VNET_PREFIX=$(jq -r '.vnetAddressPrefix' "$config_file")
+    export CONFIG_AGW_NAME=$(jq -r '.applicationGateway.name' "$config_file")
+    export CONFIG_AGW_SKU=$(jq -r '.applicationGateway.sku' "$config_file")
+    export CONFIG_LOG_WORKSPACE=$(jq -r '.logging.logAnalyticsWorkspace' "$config_file")
+    
+    echo -e "${GREEN}Global configuration exported for environment: ${env}${NC}"
+}
+
+# Export tenant configuration as environment variables
+export_tenant_config() {
+    local tenant="${1}"
+    local env="${2:-dev}"
+    
+    check_jq || return 1
+    
+    local config_file
+    config_file=$(load_tenant_config "$tenant" "$env") || return 1
+    
+    export TENANT_NAME=$(jq -r '.tenantName' "$config_file")
+    export TENANT_DISPLAY_NAME=$(jq -r '.tenantDisplayName' "$config_file")
+    export TENANT_DOMAIN=$(jq -r '.domainName' "$config_file")
+    export TENANT_CAE_NAME=$(jq -r '.containerAppEnvironment' "$config_file")
+    export TENANT_CAE_SUBNET=$(jq -r '.caeSubnetPrefix' "$config_file")
+    export TENANT_ROUTING_PRIORITY=$(jq -r '.routing.priority' "$config_file")
+    
+    echo -e "${GREEN}Tenant configuration exported for: ${tenant} (${env})${NC}"
+}
+
+# Validate configuration files
+validate_config() {
+    local env="${1:-dev}"
+    local errors=0
+    
+    check_jq || return 1
+    
+    echo -e "${BLUE}Validating configuration files for environment: ${env}${NC}"
+    echo
+    
+    # Validate global configuration
+    echo "Checking global configuration..."
+    local global_config="$CONFIG_DIR/parameters-${env}.json"
+    if [ -f "$global_config" ]; then
+        if jq empty "$global_config" 2>/dev/null; then
+            echo -e "${GREEN}✓ Global configuration is valid${NC}"
+        else
+            echo -e "${RED}✗ Global configuration has invalid JSON${NC}"
+            ((errors++))
+        fi
+    else
+        echo -e "${RED}✗ Global configuration file not found${NC}"
+        ((errors++))
+    fi
+    
+    # Validate tenant configurations
+    for tenant in nbrly bloom; do
+        echo "Checking ${tenant} tenant configuration..."
+        local tenant_config="$CONFIG_DIR/${tenant}/parameters-${env}.json"
+        if [ -f "$tenant_config" ]; then
+            if jq empty "$tenant_config" 2>/dev/null; then
+                echo -e "${GREEN}✓ ${tenant} tenant configuration is valid${NC}"
+                
+                # Check required fields
+                local required_fields=(".tenantName" ".domainName" ".applications")
+                for field in "${required_fields[@]}"; do
+                    if ! jq -e "$field" "$tenant_config" >/dev/null 2>&1; then
+                        echo -e "${YELLOW}  ⚠ Missing required field: ${field}${NC}"
+                    fi
+                done
+            else
+                echo -e "${RED}✗ ${tenant} tenant configuration has invalid JSON${NC}"
+                ((errors++))
+            fi
+        else
+            echo -e "${RED}✗ ${tenant} tenant configuration file not found${NC}"
+            ((errors++))
+        fi
+    done
+    
+    echo
+    if [ $errors -eq 0 ]; then
+        echo -e "${GREEN}All configuration files are valid!${NC}"
+        return 0
+    else
+        echo -e "${RED}Found ${errors} configuration errors${NC}"
+        return 1
+    fi
+}
+
+# Print configuration summary
+print_config_summary() {
+    local env="${1:-dev}"
+    local tenant="${2:-}"
+    
+    check_jq || return 1
+    
+    echo -e "${BLUE}Configuration Summary (${env})${NC}"
+    echo "================================"
+    
+    # Global configuration
+    local global_config
+    global_config=$(load_global_config "$env") || return 1
+    
+    echo
+    echo "Global Configuration:"
+    echo "  Environment: $(jq -r '.env' "$global_config")"
+    echo "  Region: $(jq -r '.region' "$global_config")"
+    echo "  Project: $(jq -r '.project' "$global_config")"
+    echo "  Resource Group: $(jq -r '.resourceGroup' "$global_config")"
+    echo "  Container Registry: $(jq -r '.containerRegistry' "$global_config")"
+    echo "  Application Gateway: $(jq -r '.applicationGateway.name' "$global_config")"
+    echo "  VNet Prefix: $(jq -r '.vnetAddressPrefix' "$global_config")"
+    
+    # Tenant configuration if specified
+    if [ -n "$tenant" ]; then
+        local tenant_config
+        tenant_config=$(load_tenant_config "$tenant" "$env") || return 1
+        
+        echo
+        echo "Tenant Configuration (${tenant}):"
+        echo "  Tenant Name: $(jq -r '.tenantName' "$tenant_config")"
+        echo "  Domain: $(jq -r '.domainName' "$tenant_config")"
+        echo "  Container App Environment: $(jq -r '.containerAppEnvironment' "$tenant_config")"
+        echo "  Subnet: $(jq -r '.caeSubnetPrefix' "$tenant_config")"
+        
+        echo
+        echo "  Applications:"
+        local apps
+        apps=$(jq -r '.applications | keys[]' "$tenant_config")
+        while IFS= read -r app; do
+            local app_name=$(jq -r ".applications.${app}.name" "$tenant_config")
+            local app_image=$(jq -r ".applications.${app}.image" "$tenant_config")
+            local app_path=$(jq -r ".applications.${app}.rootPath" "$tenant_config")
+            echo "    - ${app}: ${app_name}"
+            echo "      Image: ${app_image}"
+            echo "      Root Path: ${app_path}"
+        done <<< "$apps"
+    else
+        # Show all tenants
+        for t in nbrly bloom; do
+            local tenant_config
+            if tenant_config=$(load_tenant_config "$t" "$env" 2>/dev/null); then
+                echo
+                echo "Tenant: ${t}"
+                echo "  Domain: $(jq -r '.domainName' "$tenant_config")"
+                echo "  Applications: $(jq -r '.applications | keys | join(", ")' "$tenant_config")"
+            fi
+        done
+    fi
+    
+    echo
+}
+
+# Main function for direct script execution
+main() {
+    case "${1:-}" in
+        validate)
+            validate_config "${2:-dev}"
+            ;;
+        summary)
+            print_config_summary "${2:-dev}" "${3:-}"
+            ;;
+        export-global)
+            export_global_config "${2:-dev}"
+            ;;
+        export-tenant)
+            if [ -z "${2:-}" ]; then
+                echo "Usage: $0 export-tenant <tenant> [env]"
+                exit 1
+            fi
+            export_tenant_config "$2" "${3:-dev}"
+            ;;
+        help|--help|-h)
+            cat << EOF
+Configuration Loader Helper Script
+
+Usage: $0 <command> [options]
+
+Commands:
+  validate [env]                  - Validate all configuration files
+  summary [env] [tenant]          - Print configuration summary
+  export-global [env]             - Export global config as env vars
+  export-tenant <tenant> [env]    - Export tenant config as env vars
+  help                            - Show this help message
+
+Functions (for sourcing in other scripts):
+  check_jq                        - Check if jq is installed
+  load_global_config <env>        - Load global configuration file path
+  load_tenant_config <tenant> <env> - Load tenant configuration file path
+  get_global_value <env> <path>   - Get value from global config
+  get_tenant_value <tenant> <env> <path> - Get value from tenant config
+  get_tenant_applications <tenant> <env> - Get all app names for tenant
+  get_app_config <tenant> <app> <env> <property> - Get app property value
+  export_global_config <env>      - Export global config as env vars
+  export_tenant_config <tenant> <env> - Export tenant config as env vars
+  validate_config <env>           - Validate all configuration files
+  print_config_summary <env> [tenant] - Print configuration summary
+
+Examples:
+  # Validate dev configuration
+  $0 validate dev
+
+  # Print summary for nbrly tenant
+  $0 summary dev nbrly
+
+  # Export global configuration
+  source $0 export-global dev
+
+  # Use in another script
+  source $(dirname \$0)/../helpers/config-loader.sh
+  RESOURCE_GROUP=\$(get_global_value "dev" ".resourceGroup")
+  APP_IMAGE=\$(get_app_config "nbrly" "nbapp1" "dev" "image")
+
+EOF
+            ;;
+        *)
+            echo "Unknown command: ${1:-}"
+            echo "Run '$0 help' for usage information"
+            exit 1
+            ;;
+    esac
+}
+
+# If script is executed directly (not sourced), run main function
+if [ "${BASH_SOURCE[0]}" -ef "$0" ]; then
+    main "$@"
+fi

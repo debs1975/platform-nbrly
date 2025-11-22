@@ -1,0 +1,246 @@
+#!/bin/bash
+
+# Generate Container App YAML manifests from templates
+# Uses configuration files to populate template placeholders
+
+set -euo pipefail
+
+# Load configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/config-loader.sh"
+
+# Configuration
+ENV=${ENV:-"dev"}
+TEMPLATES_DIR="$SCRIPT_DIR/../../manifests/templates"
+OUTPUT_DIR="$SCRIPT_DIR/../../manifests"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Logging function
+log() {
+    echo -e "${BLUE}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"
+}
+
+error() {
+    echo -e "${RED}[ERROR] $1${NC}" >&2
+}
+
+success() {
+    echo -e "${GREEN}[SUCCESS] $1${NC}"
+}
+
+warning() {
+    echo -e "${YELLOW}[WARNING] $1${NC}"
+}
+
+# Get Azure subscription ID
+get_subscription_id() {
+    az account show --query id --output tsv 2>/dev/null || echo "{subscription-id}"
+}
+
+# Generate manifest from template
+generate_manifest() {
+    local tenant=$1
+    local app_key=$2
+    local template_file=$3
+    local output_file=$4
+    
+    log "Generating manifest for $tenant/$app_key"
+    
+    # Get configuration values
+    local resource_group=$(get_global_value "$ENV" ".resourceGroup")
+    local acr_name=$(get_global_value "$ENV" ".containerRegistry")
+    local acr_registry="${acr_name}.azurecr.io"
+    local container_app_env=$(get_tenant_value "$tenant" "$ENV" ".containerAppEnvironment")
+    local key_vault_name=$(get_global_value "$ENV" ".keyVault.name")
+    local subscription_id=$(get_subscription_id)
+    
+    # Get UAMI configuration
+    local uami_name=$(get_tenant_value "$tenant" "$ENV" ".managedIdentity.name")
+    local uami_client_id=$(get_tenant_value "$tenant" "$ENV" ".managedIdentity.clientId")
+    
+    # Get application configuration
+    local app_name=$(get_app_config "$tenant" "$app_key" "$ENV" "name")
+    local image_name=$(get_app_config "$tenant" "$app_key" "$ENV" "image")
+    local root_path=$(get_app_config "$tenant" "$app_key" "$ENV" "rootPath")
+    local cpu=$(get_app_config "$tenant" "$app_key" "$ENV" "cpu")
+    local memory=$(get_app_config "$tenant" "$app_key" "$ENV" "memory")
+    local min_replicas=$(get_app_config "$tenant" "$app_key" "$ENV" "minReplicas")
+    local max_replicas=$(get_app_config "$tenant" "$app_key" "$ENV" "maxReplicas")
+    
+    # Get database secret name if applicable
+    local db_secret_name=""
+    if [[ "$app_key" == *"app2" ]]; then
+        db_secret_name=$(get_tenant_value "$tenant" "$ENV" ".database.connectionStringSecret")
+    fi
+    
+    # Container name (remove registry prefix)
+    local container_name="${image_name##*/}"
+    
+    # App display name
+    local app_display_name="${app_name}"
+    
+    # Read template
+    if [ ! -f "$template_file" ]; then
+        error "Template file not found: $template_file"
+        return 1
+    fi
+    
+    # Generate manifest by replacing placeholders
+    local temp_file=$(mktemp)
+    
+    sed -e "s|#{APP_NAME}#|${app_name}|g" \
+        -e "s|#{RESOURCE_GROUP}#|${resource_group}|g" \
+        -e "s|#{SUBSCRIPTION_ID}#|${subscription_id}|g" \
+        -e "s|#{CONTAINER_APP_ENV}#|${container_app_env}|g" \
+        -e "s|#{UAMI_NAME}#|${uami_name}|g" \
+        -e "s|#{ACR_REGISTRY}#|${acr_registry}|g" \
+        -e "s|#{CONTAINER_NAME}#|${container_name}|g" \
+        -e "s|#{IMAGE_NAME}#|${image_name}|g" \
+        -e "s|#{IMAGE_TAG}#|latest|g" \
+        -e "s|#{ENVIRONMENT}#|${ENV}|g" \
+        -e "s|#{ROOT_PATH}#|${root_path}|g" \
+        -e "s|#{APP_DISPLAY_NAME}#|${app_display_name}|g" \
+        -e "s|#{TENANT}#|${tenant}|g" \
+        -e "s|#{APP_TYPE}#|${app_key}|g" \
+        -e "s|#{UAMI_CLIENT_ID}#|${uami_client_id}|g" \
+        -e "s|#{CPU}#|${cpu}|g" \
+        -e "s|#{MEMORY}#|${memory}|g" \
+        -e "s|#{MIN_REPLICAS}#|${min_replicas}|g" \
+        -e "s|#{MAX_REPLICAS}#|${max_replicas}|g" \
+        -e "s|#{KEY_VAULT_NAME}#|${key_vault_name}|g" \
+        -e "s|#{DB_SECRET_NAME}#|${db_secret_name}|g" \
+        "$template_file" > "$temp_file"
+    
+    # Create output directory if it doesn't exist
+    mkdir -p "$(dirname "$output_file")"
+    
+    # Move to final location
+    mv "$temp_file" "$output_file"
+    
+    success "Generated: $output_file"
+    return 0
+}
+
+# Generate all manifests
+generate_all_manifests() {
+    log "Generating all Container App manifests from templates"
+    log "Environment: $ENV"
+    log "Templates Directory: $TEMPLATES_DIR"
+    log "Output Directory: $OUTPUT_DIR"
+    
+    local success_count=0
+    local total_count=0
+    
+    # Generate each manifest
+    # Format: tenant app template_name
+    local apps=(
+        "nbrly nbapp1 containerapp-basic.yaml.template"
+        "nbrly nbapp2 containerapp-with-database.yaml.template"
+        "bloom bmapp1 containerapp-basic.yaml.template"
+        "bloom bmapp2 containerapp-with-database.yaml.template"
+    )
+    
+    for app_config in "${apps[@]}"; do
+        ((total_count++))
+        
+        # Split the configuration
+        read -r tenant app_key template_name <<< "$app_config"
+        
+        local template_file="$TEMPLATES_DIR/$template_name"
+        local output_file="$OUTPUT_DIR/$tenant/${app_key}-containerapp.yaml"
+        
+        if generate_manifest "$tenant" "$app_key" "$template_file" "$output_file"; then
+            ((success_count++))
+        else
+            warning "Failed to generate manifest for $tenant/$app_key"
+        fi
+    done
+    
+    # Summary
+    log "Manifest generation summary:"
+    log "Successful: $success_count/$total_count"
+    
+    if [ $success_count -eq $total_count ]; then
+        success "All manifests generated successfully!"
+        
+        log ""
+        log "Generated manifests:"
+        echo "  - manifests/nbrly/nbapp1-containerapp.yaml"
+        echo "  - manifests/nbrly/nbapp2-containerapp.yaml"
+        echo "  - manifests/bloom/bmapp1-containerapp.yaml"
+        echo "  - manifests/bloom/bmapp2-containerapp.yaml"
+        
+        log ""
+        log "Next steps:"
+        log "1. Review generated manifests"
+        log "2. Deploy using: cd ../../scripts && ./deploy-yaml.sh"
+        
+        return 0
+    else
+        error "Some manifests failed to generate"
+        return 1
+    fi
+}
+
+# Main execution
+main() {
+    # Check prerequisites
+    check_jq || exit 1
+    
+    # Check if templates directory exists
+    if [ ! -d "$TEMPLATES_DIR" ]; then
+        error "Templates directory not found: $TEMPLATES_DIR"
+        exit 1
+    fi
+    
+    # Generate all manifests
+    generate_all_manifests
+}
+
+# Help function
+show_help() {
+    echo "Generate Container App YAML manifests from templates"
+    echo
+    echo "Usage: $0"
+    echo
+    echo "This script generates YAML manifests from templates by replacing placeholders"
+    echo "with actual values from configuration files."
+    echo
+    echo "Templates used:"
+    echo "  - containerapp-basic.yaml.template (for *app1)"
+    echo "  - containerapp-with-database.yaml.template (for *app2)"
+    echo
+    echo "Configuration sources:"
+    echo "  - config/parameters-dev.json (global configuration)"
+    echo "  - config/nbrly/parameters-dev.json (NBRLY tenant)"
+    echo "  - config/bloom/parameters-dev.json (BLOOM tenant)"
+    echo
+    echo "Generated manifests:"
+    echo "  - manifests/nbrly/nbapp1-containerapp.yaml"
+    echo "  - manifests/nbrly/nbapp2-containerapp.yaml"
+    echo "  - manifests/bloom/bmapp1-containerapp.yaml"
+    echo "  - manifests/bloom/bmapp2-containerapp.yaml"
+    echo
+    echo "Prerequisites:"
+    echo "  - jq installed"
+    echo "  - Configuration files populated"
+    echo "  - UAMI client IDs populated (run populate-uami-ids.sh first)"
+    echo
+}
+
+# Handle command line arguments
+case "${1:-}" in
+    -h|--help)
+        show_help
+        exit 0
+        ;;
+    *)
+        main "$@"
+        ;;
+esac

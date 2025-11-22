@@ -1,3 +1,9 @@
 {
-    "github.copilot.chat.codeGeneration.useInstructionFiles": true
+    "github.copilot.chat.codeGeneration.useInstructionFiles": true,
+    "github.copilot.chat.instructionFiles": [
+        ".github/instructions/azure-ca-appgtwy-detail-design.instructions.md",
+        ".github/instructions/deployment-guide.md",
+        ".github/instructions/azure-ca-appgtwy-imp-plan.md",
+        ".github/instructions/iac-naming-convention.instructions.md"
+    ]
 }

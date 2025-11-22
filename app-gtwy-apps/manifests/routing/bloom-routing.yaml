@@ -1,0 +1,99 @@
+# Application Gateway Routing Configuration
+# This file contains the routing rules for BLOOM tenant
+# Domain: bloom-dev.astrapia.io
+# Path-based routing: /app1/* -> bmapp1, /app2/* -> bmapp2
+
+apiVersion: network.azure.com/v1
+kind: ApplicationGatewayConfiguration
+metadata:
+  name: bloom-routing-config
+  resourceGroup: rg-astrapia-dev
+spec:
+  applicationGateway: agw-astrapia-dev
+  
+  # Backend Address Pools
+  backendAddressPools:
+    - name: pool-bloom-app1
+      backendAddresses:
+        - fqdn: "#{BLOOM_BMAPP1_FQDN}#"  # Will be replaced with actual Container App FQDN
+    - name: pool-bloom-app2
+      backendAddresses:
+        - fqdn: "#{BLOOM_BMAPP2_FQDN}#"  # Will be replaced with actual Container App FQDN
+
+  # Backend HTTP Settings
+  backendHttpSettingsCollection:
+    - name: settings-bloom-app1
+      port: 443
+      protocol: Https
+      requestTimeout: 30
+      probe:
+        name: probe-bloom-app1
+      pickHostNameFromBackendAddress: true
+      
+    - name: settings-bloom-app2
+      port: 443
+      protocol: Https
+      requestTimeout: 30
+      probe:
+        name: probe-bloom-app2
+      pickHostNameFromBackendAddress: true
+
+  # Health Probes
+  probes:
+    - name: probe-bloom-app1
+      protocol: Https
+      path: /app1/health
+      interval: 30
+      timeout: 30
+      unhealthyThreshold: 3
+      pickHostNameFromBackendHttpSettings: true
+      match:
+        statusCodes:
+          - "200-399"
+    
+    - name: probe-bloom-app2
+      protocol: Https
+      path: /app2/health
+      interval: 30
+      timeout: 30
+      unhealthyThreshold: 3
+      pickHostNameFromBackendHttpSettings: true
+      match:
+        statusCodes:
+          - "200-399"
+
+  # HTTP Listeners
+  httpListeners:
+    - name: listener-bloom
+      frontendIPConfiguration:
+        name: appGatewayFrontendIP
+      frontendPort:
+        name: appGatewayFrontendPort
+      protocol: Http
+      hostName: bloom-dev.astrapia.io
+
+  # URL Path Maps (Path-based routing)
+  urlPathMaps:
+    - name: path-map-bloom
+      defaultBackendAddressPool:
+        name: pool-bloom-app1  # Default to app1
+      defaultBackendHttpSettings:
+        name: settings-bloom-app1
+      pathRules:
+        - name: rule-bloom-app2
+          paths:
+            - "/app2/*"
+          backendAddressPool:
+            name: pool-bloom-app2
+          backendHttpSettings:
+            name: settings-bloom-app2
+
+  # Request Routing Rules
+  requestRoutingRules:
+    - name: rule-bloom
+      ruleType: PathBasedRouting
+      httpListener:
+        name: listener-bloom
+      urlPathMap:
+        name: path-map-bloom
+      priority: 200
