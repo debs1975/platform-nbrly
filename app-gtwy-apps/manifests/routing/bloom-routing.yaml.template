@@ -1,0 +1,32 @@
+# Container Apps Environment HTTP Routing Configuration for BLOOM
+# Tenant: bloom
+# Note: Application Gateway handles SSL termination
+# CAE uses HTTP routing without custom domains (internal CAE with static IP)
+# Docs: https://learn.microsoft.com/en-us/azure/container-apps/rule-based-routing
+
+rules:
+  # Rule for bmapp1: Route /app1 and /app1/* to bmapp1 container app
+  - description: "BLOOM App1 routing rule"
+    routes:
+      - match:
+          prefix: /app1
+    targets:
+      - containerApp: "ca-bloom-bmapp1-dev"
+  
+  # Rule for bmapp2: Route /app2 and /app2/* to bmapp2 container app
+  - description: "BLOOM App2 routing rule"
+    routes:
+      - match:
+          prefix: /app2
+    targets:
+      - containerApp: "ca-bloom-bmapp2-dev"
+
+# Container Apps:
+#   - ca-bloom-bmapp1-dev (bmapp1)
+#   - ca-bloom-bmapp2-dev (bmapp2)
+#
+# Architecture:
+#   - Application Gateway: SSL termination at public IP
+#   - CAE: HTTP routing via static IP (10.100.11.197:80)
+#   - Container Apps: HTTP with allowInsecure=true
+#   - Apps must handle full path including /app1, /app2 prefixes

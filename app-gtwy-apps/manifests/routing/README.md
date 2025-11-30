@@ -93,11 +93,11 @@ backendAddresses:
 ## Deployment Methods
 
 ### Method 1: Using Shell Script (Recommended)
-The existing `configure-routing.sh` script uses Azure CLI commands to create the same configuration:
+The existing `08-configure-routing.sh` script uses Azure CLI commands to create the same configuration:
 
 ```bash
 cd ../../scripts
-./configure-routing.sh
+./08-configure-routing.sh
 ```
 
 ### Method 2: Azure CLI with YAML (Future)
@@ -234,7 +234,7 @@ az network application-gateway rule show \
 
 1. **Deploy Container Apps**: Ensure all 4 Container Apps are deployed and healthy
 2. **Get FQDNs**: Retrieve Container App FQDNs and update YAML placeholders
-3. **Deploy Routing**: Use `configure-routing.sh` script to apply routing configuration
+3. **Deploy Routing**: Use `08-configure-routing.sh` script to apply routing configuration
 4. **Test Routing**: Verify domain-based and path-based routing works correctly
 5. **Add SSL**: Configure custom domain certificates for HTTPS
 6. **Monitor**: Set up monitoring and alerting for Application Gateway and backends

@@ -43,8 +43,8 @@ log_info "Environment: $ENV"
 log_info "======================================================"
 
 # Step 1: Deploy Common Infrastructure
-log_info "Executing: 01-deploy-common-infra.sh $PROJECT $ENV"
-"${SCRIPT_DIR}/01-deploy-common-infra.sh" "$PROJECT" "$ENV"
+log_info "Executing: 01-deploy-common-infra.sh $ENV"
+"${SCRIPT_DIR}/01-deploy-common-infra.sh" "$ENV"
 log_success "Common infrastructure deployment completed."
 
 # Step 2: Deploy Tenant-Specific Infrastructure and Routing

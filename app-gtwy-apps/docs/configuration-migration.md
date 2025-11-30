@@ -91,7 +91,7 @@ docker push "$APP_IMAGE:$APP_TAG"
 **Scripts Updated:**
 - `scripts/deploy-nbrly.sh`
 - `scripts/deploy-bloom.sh`
-- `scripts/deploy-all.sh`
+- `scripts/04-deploy-all.sh`
 
 **Configuration Used:**
 ```bash
@@ -126,7 +126,7 @@ az containerapp create \
 ### 3. Routing Scripts
 
 **Scripts Updated:**
-- `scripts/configure-routing.sh`
+- `scripts/08-configure-routing.sh`
 - `scripts/routing/configure-routing-nbrly.sh`
 - `scripts/routing/configure-routing-bloom.sh`
 
@@ -152,10 +152,10 @@ az network application-gateway address-pool create \
 ### 4. YAML Manifests
 
 **Manifests Updated:**
-- `manifests/nbrly/nbapp1-containerapp.yaml`
-- `manifests/nbrly/nbapp2-containerapp.yaml`
-- `manifests/bloom/bmapp1-containerapp.yaml`
-- `manifests/bloom/bmapp2-containerapp.yaml`
+- `manifests/.generated/nbrly-nbapp1.yaml`
+- `manifests/.generated/nbrly-nbapp2.yaml`
+- `manifests/.generated/bloom-bmapp1.yaml`
+- `manifests/.generated/bloom-bmapp2.yaml`
 
 **Configuration Mapping:**
 ```yaml

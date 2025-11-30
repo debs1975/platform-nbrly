@@ -148,7 +148,7 @@ cd scripts/helpers
 
 2. Deploy container apps:
    ```bash
-   ./deploy-all.sh latest
+   ./04-deploy-all.sh latest
    ```
 
 ## Azure Resources Used

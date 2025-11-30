@@ -44,7 +44,7 @@ November 21, 2024
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │                    Deployment Layer                         │
-│  scripts/deploy-yaml.sh                                     │
+│  scripts/07-deploy-yaml.sh                                   │
 │  - Calls generate-manifests.sh                              │
 │  - Fetches runtime values (UAMI client IDs)                 │
 │  - Deploys to Azure Container Apps                          │
@@ -84,11 +84,11 @@ November 21, 2024
 - Reads tenant-specific configuration from `config/{tenant}/parameters-dev.json`
 - Uses `config-loader.sh` functions: `get_global_value`, `get_tenant_value`, `get_app_config`
 - Replaces placeholders using `sed` with multiple `-e` flags
-- Generates 4 manifests:
-  - `manifests/nbrly/nbapp1-containerapp.yaml`
-  - `manifests/nbrly/nbapp2-containerapp.yaml`
-  - `manifests/bloom/bmapp1-containerapp.yaml`
-  - `manifests/bloom/bmapp2-containerapp.yaml`
+- Generates 4 manifests in `manifests/.generated/`:
+  - `nbrly-nbapp1.yaml`
+  - `nbrly-nbapp2.yaml`
+  - `bloom-bmapp1.yaml`
+  - `bloom-bmapp2.yaml`
 
 **App-to-Template Mapping**:
 ```bash
@@ -102,7 +102,7 @@ apps=(
 
 ### 3. Updated Deployment Script
 
-**Location**: `scripts/deploy-yaml.sh`
+**Location**: `scripts/07-deploy-yaml.sh`
 
 **New Behavior**:
 1. **Before**: Manually updated manifests, replaced placeholders at deployment
@@ -192,7 +192,7 @@ All placeholders use the format: `#{PLACEHOLDER}#`
 ### Automatic (during deployment)
 ```bash
 cd scripts
-./deploy-yaml.sh latest
+./07-deploy-yaml.sh latest
 ```
 
 This automatically:
@@ -212,13 +212,13 @@ Output:
 [2025-11-21 15:12:00] Generating all Container App manifests from templates
 [2025-11-21 15:12:00] Environment: dev
 [2025-11-21 15:12:00] Generating manifest for nbrly/nbapp1
-[SUCCESS] Generated: manifests/nbrly/nbapp1-containerapp.yaml
-[2025-11-21 15:12:00] Generating manifest for nbrly/nbapp2
-[SUCCESS] Generated: manifests/nbrly/nbapp2-containerapp.yaml
-[2025-11-21 15:12:00] Generating manifest for bloom/bmapp1
-[SUCCESS] Generated: manifests/bloom/bmapp1-containerapp.yaml
-[2025-11-21 15:12:00] Generating manifest for bloom/bmapp2
-[SUCCESS] Generated: manifests/bloom/bmapp2-containerapp.yaml
+[SUCCESS] Generated: manifests/.generated/nbrly-nbapp1.yaml
+[2025-11-22 14:30:26] Generating manifest for nbrly/nbapp2
+[SUCCESS] Generated: manifests/.generated/nbrly-nbapp2.yaml
+[2025-11-22 14:30:27] Generating manifest for bloom/bmapp1
+[SUCCESS] Generated: manifests/.generated/bloom-bmapp1.yaml
+[2025-11-22 14:30:28] Generating manifest for bloom/bmapp2
+[SUCCESS] Generated: manifests/.generated/bloom-bmapp2.yaml
 [2025-11-21 15:12:00] Manifest generation summary:
 [2025-11-21 15:12:00] Successful: 4/4
 [SUCCESS] All manifests generated successfully!
@@ -268,7 +268,7 @@ Output:
 - Functions: `get_global_value`, `get_tenant_value`, `get_app_config`
 
 ### Deployment Script (updated)
-- `scripts/deploy-yaml.sh`
+- `scripts/07-deploy-yaml.sh`
 - Now calls `generate-manifests.sh` first
 - Then proceeds with deployment as before
 
@@ -293,7 +293,7 @@ cd app-gtwy-apps/scripts/helpers
 ### Test 2: Verify Placeholder Replacement
 ```bash
 # Check nbapp1 manifest
-cat ../../manifests/nbrly/nbapp1-containerapp.yaml | grep -E "(name:|image:|value:)" | head -20
+cat manifests/.generated/nbrly-nbapp1.yaml | grep -E "(name:|image:|value:)" | head -20
 ```
 
 **Result**: ✅ All placeholders replaced with actual values from config
@@ -301,7 +301,7 @@ cat ../../manifests/nbrly/nbapp1-containerapp.yaml | grep -E "(name:|image:|valu
 ### Test 3: Verify UAMI Integration
 ```bash
 # Check nbapp2 manifest for Key Vault secrets
-cat ../../manifests/nbrly/nbapp2-containerapp.yaml | grep -A 5 "secrets:"
+cat manifests/.generated/nbrly-nbapp2.yaml | grep -A 5 "secrets:"
 ```
 
 **Result**: ✅ Key Vault secret configuration present with UAMI
@@ -309,7 +309,7 @@ cat ../../manifests/nbrly/nbapp2-containerapp.yaml | grep -A 5 "secrets:"
 ### Test 4: Deployment Integration
 ```bash
 cd app-gtwy-apps/scripts
-./deploy-yaml.sh latest
+./07-deploy-yaml.sh latest
 ```
 
 **Expected**: Manifests generated → UAMI IDs populated → Deployment proceeds
@@ -394,10 +394,8 @@ Shows difference between current and generated manifests.
 Consider adding to `.gitignore`:
 ```
 # Generated manifests (generated from templates)
-app-gtwy-apps/manifests/nbrly/*.yaml
-app-gtwy-apps/manifests/bloom/*.yaml
-!app-gtwy-apps/manifests/nbrly/.gitkeep
-!app-gtwy-apps/manifests/bloom/.gitkeep
+app-gtwy-apps/manifests/.generated/*.yaml
+app-gtwy-apps/manifests/.generated/routing/*.yaml
 ```
 
 Only commit templates and configuration, not generated files.
@@ -423,14 +421,14 @@ Automatically creates:
 - ✅ `TEMPLATE_SYSTEM_SUMMARY.md` (this file)
 
 ### Modified
-- ✅ `scripts/deploy-yaml.sh` - Added manifest generation call
+- ✅ `scripts/07-deploy-yaml.sh` - Added manifest generation call
 - ✅ `manifests/README.md` - Updated to document template system
 
 ### Generated (by template system)
-- ✅ `manifests/nbrly/nbapp1-containerapp.yaml`
-- ✅ `manifests/nbrly/nbapp2-containerapp.yaml`
-- ✅ `manifests/bloom/bmapp1-containerapp.yaml`
-- ✅ `manifests/bloom/bmapp2-containerapp.yaml`
+- ✅ `manifests/.generated/nbrly-nbapp1.yaml`
+- ✅ `manifests/.generated/nbrly-nbapp2.yaml`
+- ✅ `manifests/.generated/bloom-bmapp1.yaml`
+- ✅ `manifests/.generated/bloom-bmapp2.yaml`
 
 ## Conclusion
 

@@ -77,7 +77,7 @@ Before deploying applications, verify the following:
 
 ### Infrastructure (iac-cli)
 
-- [ ] All infrastructure deployed via `iac-cli/scripts/00-deploy-all.sh`
+- [ ] All infrastructure deployed via `iac-cli/scripts/deploy-all.sh`
 - [ ] User Managed Identities created:
   - [ ] `nbrly-dev-uami` exists
   - [ ] `bloom-dev-uami` exists
@@ -139,10 +139,10 @@ cd app-gtwy-apps/scripts
 ./build-push-all.sh latest
 
 # 2. Deploy container apps
-./deploy-all.sh latest
+./04-deploy-all.sh latest
 
 # 3. Configure Application Gateway routing
-./configure-routing.sh
+./08-configure-routing.sh
 
 # 4. Verify deployment
 az containerapp show --name ca-nbrly-nbapp1-dev --resource-group astra-dev-eastus-rg

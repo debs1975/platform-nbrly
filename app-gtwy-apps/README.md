@@ -60,11 +60,14 @@ app-gtwy-apps/
     ├── build-push-all.sh      # Build and push all images
     ├── build-push-nbrly.sh    # Build NBRLY tenant images
     ├── build-push-bloom.sh    # Build BLOOM tenant images
-    ├── deploy-all.sh          # Deploy all Container Apps (imperative)
-    ├── deploy-nbrly.sh        # Deploy NBRLY tenant apps (imperative)
-    ├── deploy-bloom.sh        # Deploy BLOOM tenant apps (imperative)
-    ├── deploy-yaml.sh         # Deploy using YAML manifests (declarative)
-    └── configure-routing.sh   # Configure Application Gateway routing
+    ├── 01-build-push-all.sh   # Numbered: Build and push all images
+    ├── 02-build-push-nbrly.sh # Numbered: Build NBRLY tenant images  
+    ├── 03-build-push-bloom.sh # Numbered: Build BLOOM tenant images
+    ├── 04-deploy-all.sh       # Numbered: Deploy all Container Apps (imperative)
+    ├── 05-deploy-nbrly.sh     # Numbered: Deploy NBRLY tenant apps
+    ├── 06-deploy-bloom.sh     # Numbered: Deploy BLOOM tenant apps
+    ├── 07-deploy-yaml.sh      # Numbered: Deploy using YAML manifests (declarative)
+    └── 08-configure-routing.sh   # Configure Application Gateway routing
 ```
 
 ## 🚀 Quick Start
@@ -84,7 +87,7 @@ app-gtwy-apps/
 3. **Azure Infrastructure Deployed** using `iac-cli`:
    ```bash
    cd ../iac-cli/scripts
-   ./00-deploy-all.sh
+   ./deploy-all.sh
    ```
    
    This creates all required Azure resources:
@@ -117,15 +120,15 @@ app-gtwy-apps/
 3. **Deploy Container Apps** (choose one method):
    ```bash
    # Method 1: Using Azure CLI scripts (imperative)
-   ./deploy-all.sh latest
+   ./04-deploy-all.sh latest
    
    # Method 2: Using YAML manifests (declarative)
-   ./deploy-yaml.sh latest
+   ./07-deploy-yaml.sh latest
    ```
 
 4. **Configure Application Gateway Routing**:
    ```bash
-   ./configure-routing.sh
+   ./08-configure-routing.sh
    ```
 
 5. **Test the Deployment**:
@@ -158,13 +161,13 @@ app-gtwy-apps/
 ### Imperative Deployment (Azure CLI)
 Use shell scripts that programmatically create Container Apps:
 ```bash
-./scripts/deploy-all.sh latest
+./scripts/04-deploy-all.sh latest
 ```
 
 ### Declarative Deployment (YAML Manifests)
 Use Kubernetes-style YAML manifests for Container Apps:
 ```bash
-./scripts/deploy-yaml.sh latest
+./scripts/07-deploy-yaml.sh latest
 ```
 
 YAML manifests are located in `manifests/` directory and provide:

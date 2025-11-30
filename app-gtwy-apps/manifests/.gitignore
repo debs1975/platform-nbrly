@@ -1,0 +1,16 @@
+# Ignore all backup directories
+.bak/*
+
+# But keep the README
+!.bak/README.md
+
+# Ignore generated manifest files
+# NOTE: All generated manifests are now in ../manifests.generated/
+nbrly/*.yaml
+bloom/*.yaml
+routing/*.yaml
+
+# Keep template files and documentation
+!templates/
+!README.md
+!*/README.md

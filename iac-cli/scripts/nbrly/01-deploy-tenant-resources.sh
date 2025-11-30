@@ -251,10 +251,18 @@ if [ -z "$caeId" ]; then
         --logs-workspace-id "$lawId" \
         --infrastructure-subnet-resource-id "$subnetId" \
         --internal-only true \
+        --mi-user-assigned "$uamiId" \
         --query "id" -o tsv)
     log_success "Created Container App Environment: ${caeName}"
 else
     log_info "Container App Environment ${caeName} already exists"
+    # Update existing environment to add UAMI if not present
+    log_info "Ensuring UAMI is assigned to Container App Environment..."
+    az containerapp env update \
+        --name "$caeName" \
+        --resource-group "$rgName" \
+        --mi-user-assigned "$uamiId" \
+        --output none 2>/dev/null || log_info "UAMI already assigned or update not needed"
 fi
 
 jq --arg tenant "$tenantName" --arg caeName "$caeName" --arg caeId "$caeId" \

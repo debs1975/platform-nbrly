@@ -1,56 +1,82 @@
 #!/bin/bash
 
-# Usage: ./01-deploy-common-infra.sh <project> [environment]
-# Example: ./01-deploy-common-infra.sh astra dev
+# =============================================================================
+# Common Infrastructure Deployment Script
+# This script deploys the shared infrastructure components for the Astra platform
+# =============================================================================
 
-# Exit immediately if a command exits with a non-zero status
-set -e
+set -euo pipefail
 
-# Get the directory where this script is located
+# Script directory for relative path resolution
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Source helper scripts
-source "${SCRIPT_DIR}/helpers/logging.sh"
-source "${SCRIPT_DIR}/helpers/azure-login.sh"
+# Configuration files
+CONFIG_DIR="$PROJECT_ROOT/config"
+PARAMETERS_FILE="$CONFIG_DIR/parameters-dev.json"
+INFRA_FILE="$CONFIG_DIR/infra-dev.json"
 
-# Trap errors and print error message
+# Source helper functions
+source "$SCRIPT_DIR/helpers/logging.sh"
+source "$SCRIPT_DIR/helpers/config-parser.sh"
+source "$SCRIPT_DIR/helpers/azure-login.sh"
+
+# Setup logging
+setup_logging "common-infra" "dev"
+
+# Trap errors
 trap 'log_error "Script failed at line $LINENO with exit code $?"' ERR
 
-# Get project name parameter (required)
-PROJECT=${1}
-if [ -z "$PROJECT" ]; then
-  log_error "Project name is required"
-  log_error "Usage: ./01-deploy-common-infra.sh <project> [dev|stage|prod]"
-  exit 1
+log_info "Starting common infrastructure deployment"
+log_info "Using parameters: $PARAMETERS_FILE"
+log_info "Using infrastructure: $INFRA_FILE"
+
+# Validate configuration files exist
+if [ ! -f "$PARAMETERS_FILE" ]; then
+    log_error "Parameters file not found: $PARAMETERS_FILE"
+    exit 1
 fi
 
-# Get environment parameter (default to dev if not provided)
-ENV=${2:-dev}
-
-# Validate environment
-if [[ ! "$ENV" =~ ^(dev|stage|prod)$ ]]; then
-  log_error "Invalid environment: $ENV"
-  log_error "Usage: ./01-deploy-common-infra.sh <project> [dev|stage|prod]"
-  exit 1
+if [ ! -f "$INFRA_FILE" ]; then
+    log_error "Infrastructure file not found: $INFRA_FILE"
+    exit 1
 fi
 
-log_info "Deploying common infrastructure for project: $PROJECT, environment: $ENV"
+# Parse configuration from our reverse-engineered files
+ENVIRONMENT=$(parse_config "$PARAMETERS_FILE" ".environment")
+LOCATION=$(parse_config "$PARAMETERS_FILE" ".location")
+SUBSCRIPTION_ID=$(parse_config "$INFRA_FILE" ".subscription.id")
+RESOURCE_GROUP=$(parse_config "$INFRA_FILE" ".resourceGroup.name")
 
-# Load common parameters
-CONFIG_FILE="${SCRIPT_DIR}/../config/parameters-${ENV}.json"
-if [ ! -f "$CONFIG_FILE" ]; then
-  log_error "Configuration file not found: $CONFIG_FILE"
-  exit 1
-fi
+# Virtual Network configuration
+VNET_NAME=$(parse_config "$INFRA_FILE" ".networking.virtualNetwork.name")
+VNET_ADDRESS_PREFIX=$(parse_config "$INFRA_FILE" ".networking.virtualNetwork.addressPrefixes[0]")
 
-# Load top-level scalar values from config (skip nested objects)
-while IFS="=" read -r key value; do
-  export "$key"="$value"
-done < <(jq -r 'to_entries | .[] | select(.value | type != "object") | "\(.key)=\(.value)"' "$CONFIG_FILE")
+# Subnet configurations
+APPGTWY_SUBNET_NAME=$(parse_config "$INFRA_FILE" ".networking.subnets.appGateway.name")
+APPGTWY_SUBNET_PREFIX=$(parse_config "$INFRA_FILE" ".networking.subnets.appGateway.addressPrefix")
 
-# Override project from parameter (takes precedence over config file)
-project="$PROJECT"
-region="${region:-eastus}"
+NBRLY_SUBNET_NAME=$(parse_config "$INFRA_FILE" ".networking.subnets.nbrlyCAE.name")
+NBRLY_SUBNET_PREFIX=$(parse_config "$INFRA_FILE" ".networking.subnets.nbrlyCAE.addressPrefix")
+
+BLOOM_SUBNET_NAME=$(parse_config "$INFRA_FILE" ".networking.subnets.bloomCAE.name")
+BLOOM_SUBNET_PREFIX=$(parse_config "$INFRA_FILE" ".networking.subnets.bloomCAE.addressPrefix")
+
+# Private Endpoint Subnet configuration
+PE_SUBNET_NAME=$(parse_config "$INFRA_FILE" ".networking.subnets.privateEndpoint.name")
+PE_SUBNET_PREFIX=$(parse_config "$INFRA_FILE" ".networking.subnets.privateEndpoint.addressPrefix")
+
+
+
+# Application Gateway configuration
+AGW_NAME=$(parse_config "$INFRA_FILE" ".applicationGateway.name")
+AGW_PIP_NAME=$(parse_config "$INFRA_FILE" ".applicationGateway.publicIPAddress.name")
+
+# Key Vault configuration
+KV_NAME=$(parse_config "$INFRA_FILE" ".keyVault.name")
+
+# Container Registry configuration
+ACR_NAME=$(parse_config "$INFRA_FILE" ".containerRegistry.name")
 
 # Define the output file for generated infrastructure details
 output_file="${SCRIPT_DIR}/../config/.generated/generated-infra-${ENV}.json"
@@ -92,232 +118,190 @@ agwUamiName="agw-managed-identity" # Managed identity for the AGW
 
 # Print all inferred variables before deployment
 log_info "======================================================"
-log_info "Inferred Resource Names:"
+log_info "Infrastructure Configuration:"
 log_info "======================================================"
-log_info "Project:              $project"
-log_info "Environment:          $ENV"
-log_info "Region:               $region"
-log_info "Resource Group:       $rgName"
-log_info "VNet:                 $vnetName"
-log_info "VNet Address Prefix:  $vnetAddressPrefix"
-log_info "App Gateway:          $agwName"
-log_info "Public IP:            $pipName"
-log_info "Key Vault:            $kvName"
-log_info "Container Registry:   $acrName"
-log_info "Log Analytics:        $lawName"
-log_info "AGW Managed Identity: $agwUamiName"
+log_info "Environment:          $ENVIRONMENT"
+log_info "Location:             $LOCATION"
+log_info "Subscription:         $SUBSCRIPTION_ID"
+log_info "Resource Group:       $RESOURCE_GROUP"
+log_info "VNet:                 $VNET_NAME"
+log_info "VNet Address Prefix:  $VNET_ADDRESS_PREFIX"
+log_info "App Gateway:          $AGW_NAME"
+log_info "Public IP:            $AGW_PIP_NAME"
+log_info "Key Vault:            $KV_NAME"
+log_info "Container Registry:   $ACR_NAME"
 log_info "======================================================"
 
 # Login to Azure
 azure_login
 
-# 1. Create Resource Group
-log_info "Checking if resource group exists: $rgName"
-if ! az group show --name "$rgName" &>/dev/null; then
-    log_info "Creating resource group: $rgName"
-    rgId=$(az group create --name "$rgName" --location "$region" --query "id" -o tsv)
-    log_success "Created resource group: $rgName"
-else
-    log_info "Resource group already exists: $rgName"
-    rgId=$(az group show --name "$rgName" --query "id" -o tsv || true)
-fi
-jq --arg rgName "$rgName" --arg rgId "$rgId" \
-   '.common += {resourceGroupName: $rgName, resourceGroupId: $rgId}' \
-   "$output_file" > tmp.$$.json && mv tmp.$$.json "$output_file"
-# Update infra tracking file
-jq --arg rgName "$rgName" --arg rgId "$rgId" \
-   '.resources += {resourceGroup: {name: $rgName, id: $rgId}}' \
-   "$infra_file" > tmp.$$.json && mv tmp.$$.json "$infra_file"
+# Set Azure subscription
+log_info "Setting Azure subscription to: $SUBSCRIPTION_ID"
+az account set --subscription "$SUBSCRIPTION_ID"
 
-# 2. Setup Networking
-log_info "Checking if VNet exists: $vnetName"
-if ! az network vnet show --name "$vnetName" --resource-group "$rgName" &>/dev/null; then
-    log_info "Creating VNet: $vnetName"
-    vnetId=$(az network vnet create \
-      --name "$vnetName" \
-      --resource-group "$rgName" \
-      --location "$region" \
-      --address-prefix "$vnetAddressPrefix" \
-      --query "id" -o tsv)
-    log_success "Created VNet: $vnetName"
+# 1. Create Resource Group (if not exists)
+log_info "Checking if resource group exists: $RESOURCE_GROUP"
+if ! az group show --name "$RESOURCE_GROUP" &>/dev/null; then
+    log_info "Creating resource group: $RESOURCE_GROUP"
+    az group create \
+        --name "$RESOURCE_GROUP" \
+        --location "$LOCATION" \
+        --tags Environment="$ENVIRONMENT" Project="astra" \
+        --output table
+    log_success "Created resource group: $RESOURCE_GROUP"
 else
-    log_info "VNet already exists: $vnetName"
-    vnetId=$(az network vnet show --name "$vnetName" --resource-group "$rgName" --query "id" -o tsv || true)
+    log_info "Resource group already exists: $RESOURCE_GROUP"
 fi
-jq --arg vnetName "$vnetName" --arg vnetId "$vnetId" \
-   '.common += {vnetName: $vnetName, vnetId: $vnetId}' \
-   "$output_file" > tmp.$$.json && mv tmp.$$.json "$output_file"
-# Update infra tracking file
-jq --arg vnetName "$vnetName" --arg vnetId "$vnetId" \
-   '.resources += {vnet: {name: $vnetName, id: $vnetId}}' \
-   "$infra_file" > tmp.$$.json && mv tmp.$$.json "$infra_file"
 
-log_info "Checking if Application Gateway subnet exists"
-if ! az network vnet subnet show --name "snet-appgateway" --vnet-name "$vnetName" --resource-group "$rgName" &>/dev/null; then
-    log_info "Creating Application Gateway subnet"
+# 2. Create Virtual Network
+log_info "Checking if VNet exists: $VNET_NAME"
+if ! az network vnet show --name "$VNET_NAME" --resource-group "$RESOURCE_GROUP" &>/dev/null; then
+    log_info "Creating VNet: $VNET_NAME"
+    az network vnet create \
+        --name "$VNET_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --location "$LOCATION" \
+        --address-prefixes "$VNET_ADDRESS_PREFIX" \
+        --tags Environment="$ENVIRONMENT" Project="astra" \
+        --output table
+    log_success "Created VNet: $VNET_NAME"
+else
+    log_info "VNet already exists: $VNET_NAME"
+fi
+
+# 3. Create Subnets
+log_info "Creating Application Gateway subnet: $APPGTWY_SUBNET_NAME"
+if ! az network vnet subnet show --name "$APPGTWY_SUBNET_NAME" --vnet-name "$VNET_NAME" --resource-group "$RESOURCE_GROUP" &>/dev/null; then
     az network vnet subnet create \
-      --name "snet-appgateway" \
-      --vnet-name "$vnetName" \
-      --resource-group "$rgName" \
-      --address-prefixes "$appGatewaySubnetPrefix"
+        --resource-group "$RESOURCE_GROUP" \
+        --vnet-name "$VNET_NAME" \
+        --name "$APPGTWY_SUBNET_NAME" \
+        --address-prefixes "$APPGTWY_SUBNET_PREFIX" \
+        --output table
+    log_success "Created Application Gateway subnet: $APPGTWY_SUBNET_NAME"
 else
-    log_info "Application Gateway subnet already exists"
+    log_info "Application Gateway subnet already exists: $APPGTWY_SUBNET_NAME"
 fi
 
-log_info "Checking if Bastion subnet exists"
-if ! az network vnet subnet show --name "AzureBastionSubnet" --vnet-name "$vnetName" --resource-group "$rgName" &>/dev/null; then
-    log_info "Creating Bastion subnet"
+log_info "Creating NBRLY Container App Environment subnet: $NBRLY_SUBNET_NAME"
+if ! az network vnet subnet show --name "$NBRLY_SUBNET_NAME" --vnet-name "$VNET_NAME" --resource-group "$RESOURCE_GROUP" &>/dev/null; then
     az network vnet subnet create \
-      --name "AzureBastionSubnet" \
-      --vnet-name "$vnetName" \
-      --resource-group "$rgName" \
-      --address-prefixes "$bastionSubnetPrefix"
+        --resource-group "$RESOURCE_GROUP" \
+        --vnet-name "$VNET_NAME" \
+        --name "$NBRLY_SUBNET_NAME" \
+        --address-prefixes "$NBRLY_SUBNET_PREFIX" \
+        --output table
+    log_success "Created NBRLY CAE subnet: $NBRLY_SUBNET_NAME"
 else
-    log_info "Bastion subnet already exists"
+    log_info "NBRLY CAE subnet already exists: $NBRLY_SUBNET_NAME"
 fi
 
-log_info "Checking if PostgreSQL subnet exists"
-if ! az network vnet subnet show --name "snet-postgres" --vnet-name "$vnetName" --resource-group "$rgName" &>/dev/null; then
-    log_info "Creating PostgreSQL subnet"
+log_info "Creating BLOOM Container App Environment subnet: $BLOOM_SUBNET_NAME"
+if ! az network vnet subnet show --name "$BLOOM_SUBNET_NAME" --vnet-name "$VNET_NAME" --resource-group "$RESOURCE_GROUP" &>/dev/null; then
     az network vnet subnet create \
-      --name "snet-postgres" \
-      --vnet-name "$vnetName" \
-      --resource-group "$rgName" \
-      --address-prefixes "$postgresSubnetPrefix" \
-      --delegations "Microsoft.DBforPostgreSQL/flexibleServers"
+        --resource-group "$RESOURCE_GROUP" \
+        --vnet-name "$VNET_NAME" \
+        --name "$BLOOM_SUBNET_NAME" \
+        --address-prefixes "$BLOOM_SUBNET_PREFIX" \
+        --output table
+    log_success "Created BLOOM CAE subnet: $BLOOM_SUBNET_NAME"
 else
-    log_info "PostgreSQL subnet already exists"
+    log_info "BLOOM CAE subnet already exists: $BLOOM_SUBNET_NAME"
 fi
 
-# 3. Deploy Core Services
-log_info "Checking if Log Analytics Workspace exists: $lawName"
-if ! az monitor log-analytics workspace show --resource-group "$rgName" --workspace-name "$lawName" &>/dev/null; then
-    log_info "Creating Log Analytics Workspace: $lawName"
-    lawOutput=$(az monitor log-analytics workspace create \
-      --resource-group "$rgName" \
-      --workspace-name "$lawName" \
-      --location "$region")
-    lawId=$(echo "$lawOutput" | jq -r '.id')
-    lawCustomerId=$(echo "$lawOutput" | jq -r '.customerId')
-    log_success "Created Log Analytics Workspace: $lawName"
+log_info "Creating Private Endpoint subnet: $PE_SUBNET_NAME"
+if ! az network vnet subnet show --name "$PE_SUBNET_NAME" --vnet-name "$VNET_NAME" --resource-group "$RESOURCE_GROUP" &>/dev/null; then
+    az network vnet subnet create \
+        --resource-group "$RESOURCE_GROUP" \
+        --vnet-name "$VNET_NAME" \
+        --name "$PE_SUBNET_NAME" \
+        --address-prefixes "$PE_SUBNET_PREFIX" \
+        --output table
+    log_success "Created Private Endpoint subnet: $PE_SUBNET_NAME"
 else
-    log_info "Log Analytics Workspace already exists: $lawName"
-    lawOutput=$(az monitor log-analytics workspace show --resource-group "$rgName" --workspace-name "$lawName" || true)
-    lawId=$(echo "$lawOutput" | jq -r '.id')
-    lawCustomerId=$(echo "$lawOutput" | jq -r '.customerId')
+    log_info "Private Endpoint subnet already exists: $PE_SUBNET_NAME"
 fi
-jq --arg lawName "$lawName" --arg lawId "$lawId" --arg lawCustomerId "$lawCustomerId" \
-   '.common += {logAnalyticsWorkspaceName: $lawName, logAnalyticsWorkspaceId: $lawId, logAnalyticsCustomerId: $lawCustomerId}' \
-   "$output_file" > tmp.$$.json && mv tmp.$$.json "$output_file"
-# Update infra tracking file
-jq --arg lawName "$lawName" --arg lawId "$lawId" \
-   '.resources += {logAnalytics: {name: $lawName, id: $lawId}}' \
-   "$infra_file" > tmp.$$.json && mv tmp.$$.json "$infra_file"
 
-log_info "Checking if Azure Container Registry exists: $acrName"
-if ! az acr show --name "$acrName" --resource-group "$rgName" &>/dev/null; then
-    log_info "Creating Azure Container Registry: $acrName"
-    acrId=$(az acr create \
-      --resource-group "$rgName" \
-      --name "$acrName" \
-      --sku "Standard" \
-      --admin-enabled false \
-      --query "id" -o tsv)
-    log_success "Created Azure Container Registry: $acrName"
+# 4. Create Container Registry
+log_info "Creating Container Registry: $ACR_NAME"
+if ! az acr show --name "$ACR_NAME" --resource-group "$RESOURCE_GROUP" &>/dev/null; then
+    az acr create \
+        --resource-group "$RESOURCE_GROUP" \
+        --name "$ACR_NAME" \
+        --sku Basic \
+        --location "$LOCATION" \
+        --tags Environment="$ENVIRONMENT" Project="astra" \
+        --output table
+    log_success "Created Container Registry: $ACR_NAME"
 else
-    log_info "Container Registry already exists: $acrName"
-    acrId=$(az acr show --name "$acrName" --resource-group "$rgName" --query "id" -o tsv || true)
+    log_info "Container Registry already exists: $ACR_NAME"
 fi
-jq --arg acrName "$acrName" --arg acrId "$acrId" \
-   '.common += {acrName: $acrName, acrId: $acrId}' \
-   "$output_file" > tmp.$$.json && mv tmp.$$.json "$output_file"
-# Update infra tracking file
-jq --arg acrName "$acrName" --arg acrId "$acrId" \
-   '.resources += {containerRegistry: {name: $acrName, id: $acrId}}' \
-   "$infra_file" > tmp.$$.json && mv tmp.$$.json "$infra_file"
 
-log_info "Checking if Key Vault exists: $kvName"
-if ! az keyvault show --name "$kvName" --resource-group "$rgName" &>/dev/null; then
-    log_info "Creating Key Vault: $kvName"
-    kvId=$(az keyvault create \
-      --name "$kvName" \
-      --resource-group "$rgName" \
-      --location "$region" \
-      --enable-rbac-authorization true \
-      --query "id" -o tsv)
-    log_success "Created Key Vault: $kvName"
+# 5. Create Key Vault
+log_info "Creating Key Vault: $KV_NAME"
+if ! az keyvault show --name "$KV_NAME" --resource-group "$RESOURCE_GROUP" &>/dev/null; then
+    az keyvault create \
+        --resource-group "$RESOURCE_GROUP" \
+        --name "$KV_NAME" \
+        --location "$LOCATION" \
+        --enable-rbac-authorization true \
+        --tags Environment="$ENVIRONMENT" Project="astra" \
+        --output table
+    log_success "Created Key Vault: $KV_NAME"
 else
-    log_info "Key Vault already exists: $kvName"
-    kvId=$(az keyvault show --name "$kvName" --resource-group "$rgName" --query "id" -o tsv || true)
+    log_info "Key Vault already exists: $KV_NAME"
 fi
-jq --arg kvName "$kvName" --arg kvId "$kvId" \
-   '.common += {keyVaultName: $kvName, keyVaultId: $kvId}' \
-   "$output_file" > tmp.$$.json && mv tmp.$$.json "$output_file"
-# Update infra tracking file
-jq --arg kvName "$kvName" --arg kvId "$kvId" \
-   '.resources += {keyVault: {name: $kvName, id: $kvId}}' \
-   "$infra_file" > tmp.$$.json && mv tmp.$$.json "$infra_file"
 
-# Assign RBAC roles to current user/SPN for Key Vault operations
+# 6. Assign RBAC roles for Key Vault operations
 log_info "Assigning Key Vault RBAC roles to current user/service principal"
-currentUserId=$(az ad signed-in-user show --query id -o tsv 2>/dev/null || true)
-if [ -z "$currentUserId" ]; then
+CURRENT_USER_ID=$(az ad signed-in-user show --query id -o tsv 2>/dev/null || echo "")
+if [ -z "$CURRENT_USER_ID" ]; then
     # If not a user, get the service principal object ID
-    currentUserId=$(az account show --query user.name -o tsv | xargs -I {} az ad sp show --id {} --query id -o tsv 2>/dev/null || true)
+    CURRENT_USER_ID=$(az account show --query user.name -o tsv | xargs -I {} az ad sp show --id {} --query id -o tsv 2>/dev/null || echo "")
 fi
 
-if [ -n "$currentUserId" ]; then
-    log_info "Assigning 'Key Vault Certificates Officer' role to current principal"
-    # Check if role assignment already exists
-    existingAssignment=$(az role assignment list \
-        --assignee "$currentUserId" \
-        --role "Key Vault Certificates Officer" \
-        --scope "$kvId" \
-        --query "[0].id" -o tsv 2>/dev/null || true)
+if [ -n "$CURRENT_USER_ID" ]; then
+    KV_ID=$(az keyvault show --name "$KV_NAME" --resource-group "$RESOURCE_GROUP" --query "id" -o tsv)
     
-    if [ -z "$existingAssignment" ]; then
-        az role assignment create \
-            --assignee "$currentUserId" \
-            --role "Key Vault Certificates Officer" \
-            --scope "$kvId"
+    # Check and assign Key Vault Certificates Officer role
+    if ! az role assignment list --assignee "$CURRENT_USER_ID" --role "Key Vault Certificates Officer" --scope "$KV_ID" --query "[0].id" -o tsv &>/dev/null; then
+        log_info "Assigning 'Key Vault Certificates Officer' role"
+        az role assignment create --assignee "$CURRENT_USER_ID" --role "Key Vault Certificates Officer" --scope "$KV_ID"
         log_success "Assigned 'Key Vault Certificates Officer' role"
-        log_info "Waiting 30 seconds for RBAC propagation..."
-        sleep 30
+        sleep 10
     else
         log_info "Current principal already has 'Key Vault Certificates Officer' role"
     fi
     
-    # Also assign Key Vault Secrets Officer for managing secrets
-    log_info "Assigning 'Key Vault Secrets Officer' role to current principal"
-    existingSecretAssignment=$(az role assignment list \
-        --assignee "$currentUserId" \
-        --role "Key Vault Secrets Officer" \
-        --scope "$kvId" \
-        --query "[0].id" -o tsv 2>/dev/null || true)
-    
-    if [ -z "$existingSecretAssignment" ]; then
-        az role assignment create \
-            --assignee "$currentUserId" \
-            --role "Key Vault Secrets Officer" \
-            --scope "$kvId"
+    # Check and assign Key Vault Secrets Officer role
+    if ! az role assignment list --assignee "$CURRENT_USER_ID" --role "Key Vault Secrets Officer" --scope "$KV_ID" --query "[0].id" -o tsv &>/dev/null; then
+        log_info "Assigning 'Key Vault Secrets Officer' role"
+        az role assignment create --assignee "$CURRENT_USER_ID" --role "Key Vault Secrets Officer" --scope "$KV_ID"
         log_success "Assigned 'Key Vault Secrets Officer' role"
     else
         log_info "Current principal already has 'Key Vault Secrets Officer' role"
     fi
 else
-    log_error "Could not determine current user/service principal ID"
-    exit 1
+    log_warning "Could not determine current user/service principal ID for RBAC assignment"
 fi
 
-# 4. Upload Certificate to Key Vault
-certName=$(jq -r '.customDomain.certificateName' "$CONFIG_FILE" | tr -d ' ') # remove whitespace
-log_info "Checking if SSL certificate exists in Key Vault: $certName"
-if ! az keyvault certificate show --vault-name "$kvName" --name "$certName" &>/dev/null; then
-    log_info "Importing SSL certificate to Key Vault"
-    certPassword=$(jq -r '.certificatePassword' "${SCRIPT_DIR}/../creds/astrapiaio.json")
-    certFilePathRelative=$(jq -r '.customDomain.certificateFilePath' "$CONFIG_FILE")
-    # Resolve certificate path relative to config directory
-    certFilePath="${SCRIPT_DIR}/../config/${certFilePathRelative}"
+# 4. Certificate Management (skip if already exists)
+CERT_NAME=$(parse_config "$INFRA_FILE" ".certificates.wildcard.certificateName")
+log_info "Certificate name from config: $CERT_NAME"
+
+# Check if certificate already exists in Key Vault
+log_info "Checking if SSL certificate exists in Key Vault: $CERT_NAME"
+if az keyvault certificate show --vault-name "$KV_NAME" --name "$CERT_NAME" &>/dev/null; then
+    log_info "SSL certificate already exists in Key Vault: $CERT_NAME"
+    CERT_ID=$(az keyvault certificate show --vault-name "$KV_NAME" --name "$CERT_NAME" --query "id" -o tsv)
+    CERT_SECRET_ID=$(az keyvault certificate show --vault-name "$KV_NAME" --name "$CERT_NAME" --query "sid" -o tsv)
+else
+    log_warning "SSL certificate not found in Key Vault. Please ensure certificate is uploaded manually."
+    log_info "Expected certificate name: $CERT_NAME"
+    # Set placeholder values
+    CERT_ID="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.KeyVault/vaults/$KV_NAME/certificates/$CERT_NAME"
+    CERT_SECRET_ID="https://$KV_NAME.vault.azure.net/secrets/$CERT_NAME"
+fi
     
     certId=$(az keyvault certificate import \
       --vault-name "$kvName" \
@@ -342,142 +326,159 @@ jq --arg certName "$certName" --arg certId "$certId" --arg certSecretId "$certSe
    '.resources += {certificate: {name: $certName, id: $certId, secretId: $certSecretId}}' \
    "$infra_file" > tmp.$$.json && mv tmp.$$.json "$infra_file"
 
-# 5. Deploy Application Gateway
-log_info "Checking if Public IP exists: $pipName"
-if ! az network public-ip show --name "$pipName" --resource-group "$rgName" &>/dev/null; then
-    log_info "Creating Public IP for Application Gateway"
-    pipId=$(az network public-ip create \
-      --name "$pipName" \
-      --resource-group "$rgName" \
-      --allocation-method "Static" \
-      --sku "Standard" \
-      --query "id" -o tsv)
-    log_success "Created Public IP: $pipName"
+# 7. Create Public IP for Application Gateway
+log_info "Creating Public IP for Application Gateway: $AGW_PIP_NAME"
+if ! az network public-ip show --name "$AGW_PIP_NAME" --resource-group "$RESOURCE_GROUP" &>/dev/null; then
+    az network public-ip create \
+        --name "$AGW_PIP_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --allocation-method Static \
+        --sku Standard \
+        --location "$LOCATION" \
+        --tags Environment="$ENVIRONMENT" Project="astra" \
+        --output table
+    log_success "Created Public IP: $AGW_PIP_NAME"
 else
-    log_info "Public IP already exists: $pipName"
-    pipId=$(az network public-ip show --name "$pipName" --resource-group "$rgName" --query "id" -o tsv || true)|| true)
+    log_info "Public IP already exists: $AGW_PIP_NAME"
 fi
-pipAddress=$(az network public-ip show --ids "$pipId" --query "ipAddress" -o tsv || true)
-jq --arg pipName "$pipName" --arg pipId "$pipId" --arg pipAddress "$pipAddress" \
-   '.common += {publicIpName: $pipName, publicIpId: $pipId, publicIpAddress: $pipAddress}' \
-   "$output_file" > tmp.$$.json && mv tmp.$$.json "$output_file"
-# Update infra tracking file
-jq --arg pipName "$pipName" --arg pipId "$pipId" --arg pipAddress "$pipAddress" \
-   '.resources += {publicIp: {name: $pipName, id: $pipId, address: $pipAddress}}' \
-   "$infra_file" > tmp.$$.json && mv tmp.$$.json "$infra_file"
 
-log_info "Checking if Managed Identity exists: $agwUamiName"
-if ! az identity show --name "$agwUamiName" --resource-group "$rgName" &>/dev/null; then
-    log_info "Creating Managed Identity for Application Gateway: $agwUamiName"
-    agwUamiId=$(az identity create --name "$agwUamiName" --resource-group "$rgName" --query "id" -o tsv)
+# 8. Create Managed Identity for Application Gateway
+AGW_UAMI_NAME="agw-managed-identity"
+log_info "Creating Managed Identity for Application Gateway: $AGW_UAMI_NAME"
+if ! az identity show --name "$AGW_UAMI_NAME" --resource-group "$RESOURCE_GROUP" &>/dev/null; then
+    az identity create \
+        --name "$AGW_UAMI_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --location "$LOCATION" \
+        --tags Environment="$ENVIRONMENT" Project="astra" \
+        --output table
+    log_success "Created Managed Identity: $AGW_UAMI_NAME"
+    # Wait for identity to be ready
+    sleep 30
 else
-    log_info "Managed Identity already exists: $agwUamiName"
-    agwUamiId=$(az identity show --name "$agwUamiName" --resource-group "$rgName" --query "id" -o tsv || true)|| true)
+    log_info "Managed Identity already exists: $AGW_UAMI_NAME"
 fi
-agwUamiPrincipalId=$(az identity show --name "$agwUamiName" --resource-group "$rgName" --query "principalId" -o tsv || true)
-jq --arg uamiName "$agwUamiName" --arg uamiId "$agwUamiId" \
-   '.common += {agwManagedIdentityName: $uamiName, agwManagedIdentityId: $uamiId}' \
-   "$output_file" > tmp.$$.json && mv tmp.$$.json "$output_file"
-# Update infra tracking file
-jq --arg uamiName "$agwUamiName" --arg uamiId "$agwUamiId" --arg uamiPrincipalId "$agwUamiPrincipalId" \
-   '.resources += {agwManagedIdentity: {name: $uamiName, id: $uamiId, principalId: $uamiPrincipalId}}' \
-   "$infra_file" > tmp.$$.json && mv tmp.$$.json "$infra_file"
 
-# Assign RBAC role to Application Gateway Managed Identity for Key Vault access
+AGW_UAMI_PRINCIPAL_ID=$(az identity show --name "$AGW_UAMI_NAME" --resource-group "$RESOURCE_GROUP" --query "principalId" -o tsv)
+
+# 9. Assign Key Vault RBAC roles to Application Gateway Managed Identity
 log_info "Assigning Key Vault RBAC roles to Application Gateway Managed Identity"
-# Check if Secrets User role assignment already exists
-existingSecretsRole=$(az role assignment list \
-    --assignee "$agwUamiPrincipalId" \
-    --role "Key Vault Secrets User" \
-    --scope "$kvId" \
-    --query "[0].id" -o tsv 2>/dev/null || true)
+KV_ID=$(az keyvault show --name "$KV_NAME" --resource-group "$RESOURCE_GROUP" --query "id" -o tsv)
 
-if [ -z "$existingSecretsRole" ]; then
+# Assign Key Vault Secrets User role
+if ! az role assignment list --assignee "$AGW_UAMI_PRINCIPAL_ID" --role "Key Vault Secrets User" --scope "$KV_ID" --query "[0].id" -o tsv &>/dev/null; then
     log_info "Assigning 'Key Vault Secrets User' role to App Gateway Managed Identity"
     az role assignment create \
-        --assignee "$agwUamiPrincipalId" \
+        --assignee "$AGW_UAMI_PRINCIPAL_ID" \
         --role "Key Vault Secrets User" \
-        --scope "$kvId"
+        --scope "$KV_ID"
     log_success "Assigned 'Key Vault Secrets User' role"
 else
     log_info "App Gateway Managed Identity already has 'Key Vault Secrets User' role"
 fi
 
-# Check if Certificate User role assignment already exists
-existingCertRole=$(az role assignment list \
-    --assignee "$agwUamiPrincipalId" \
-    --role "Key Vault Certificate User" \
-    --scope "$kvId" \
-    --query "[0].id" -o tsv 2>/dev/null || true)
-
-if [ -z "$existingCertRole" ]; then
+# Assign Key Vault Certificate User role
+if ! az role assignment list --assignee "$AGW_UAMI_PRINCIPAL_ID" --role "Key Vault Certificate User" --scope "$KV_ID" --query "[0].id" -o tsv &>/dev/null; then
     log_info "Assigning 'Key Vault Certificate User' role to App Gateway Managed Identity"
     az role assignment create \
-        --assignee "$agwUamiPrincipalId" \
+        --assignee "$AGW_UAMI_PRINCIPAL_ID" \
         --role "Key Vault Certificate User" \
-        --scope "$kvId"
+        --scope "$KV_ID"
     log_success "Assigned 'Key Vault Certificate User' role"
 else
     log_info "App Gateway Managed Identity already has 'Key Vault Certificate User' role"
 fi
 
-log_info "Checking if Application Gateway exists: $agwName"
-if ! az network application-gateway show --name "$agwName" --resource-group "$rgName" &>/dev/null; then
-    log_info "Deploying Application Gateway: $agwName (this may take several minutes)"
-    agwId=$(az network application-gateway create \
-      --name "$agwName" \
-      --resource-group "$rgName" \
-      --location "$region" \
-      --sku "Standard_v2" \
-      --capacity 2 \
-      --public-ip-address "$pipName" \
-      --vnet-name "$vnetName" \
-      --subnet "snet-appgateway" \
-      --identity "$agwUamiId" \
-      --priority 100 \
-      --query "id" -o tsv)
-    log_success "Created Application Gateway: $agwName"
-else
-    log_info "Application Gateway already exists: $agwName"
-    agwId=$(az network application-gateway show --name "$agwName" --resource-group "$rgName" --query "id" -o tsv || true)
-fi
-jq --arg agwName "$agwName" --arg agwId "$agwId" \
-   '.common += {appGatewayName: $agwName, appGatewayId: $agwId}' \
-   "$output_file" > tmp.$$.json && mv tmp.$$.json "$output_file"
-# Update infra tracking file
-jq --arg agwName "$agwName" --arg agwId "$agwId" \
-   '.resources += {appGateway: {name: $agwName, id: $agwId}}' \
-   "$infra_file" > tmp.$$.json && mv tmp.$$.json "$infra_file"
+# 10. Create Application Gateway (basic configuration)
+log_info "Creating Application Gateway: $AGW_NAME (this may take several minutes)"
+AGW_UAMI_ID=$(az identity show --name "$AGW_UAMI_NAME" --resource-group "$RESOURCE_GROUP" --query "id" -o tsv)
 
-# 6. Configure Application Gateway with SSL Certificate
-log_info "Adding SSL certificate from Key Vault to Application Gateway"
-certSecretId=$(jq -r '.common.sslCertificateSecretId' "$output_file")
-certName=$(jq -r '.common.sslCertificateName' "$output_file")
-
-log_info "Checking if SSL certificate '$certName' is already added to Application Gateway"
-if ! az network application-gateway ssl-cert show --gateway-name "$agwName" --resource-group "$rgName" --name "$certName" &>/dev/null; then
-    log_info "Adding SSL certificate '$certName' to Application Gateway (using secret ID)"
-    az network application-gateway ssl-cert create \
-        --gateway-name "$agwName" \
-        --resource-group "$rgName" \
-        --name "$certName" \
-        --key-vault-secret-id "$certSecretId"
+if ! az network application-gateway show --name "$AGW_NAME" --resource-group "$RESOURCE_GROUP" &>/dev/null; then
+    az network application-gateway create \
+        --name "$AGW_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --location "$LOCATION" \
+        --vnet-name "$VNET_NAME" \
+        --subnet "$APPGTWY_SUBNET_NAME" \
+        --public-ip-address "$AGW_PIP_NAME" \
+        --sku WAF_v2 \
+        --capacity 1 \
+        --http-settings-cookie-based-affinity Disabled \
+        --frontend-port 80 \
+        --http-settings-port 80 \
+        --http-settings-protocol Http \
+        --routing-rule-type Basic \
+        --identity "$AGW_UAMI_ID" \
+        --tags Environment="$ENVIRONMENT" Project="astra" \
+        --output table
+    log_success "Created Application Gateway: $AGW_NAME"
 else
-    log_info "SSL certificate '$certName' is already added to Application Gateway"
+    log_info "Application Gateway already exists: $AGW_NAME"
 fi
 
-# Create frontend port for HTTPS
-log_info "Checking if HTTPS frontend port 'port_443' exists"
-if ! az network application-gateway frontend-port show --gateway-name "$agwName" --resource-group "$rgName" --name "port_443" &>/dev/null; then
-    log_info "Creating HTTPS frontend port on Application Gateway"
-    az network application-gateway frontend-port create \
-        --gateway-name "$agwName" \
-        --resource-group "$rgName" \
-        --name "port_443" \
-        --port 443
+# 11. Configure SSL Certificate (if available)
+if [ -n "$CERT_SECRET_ID" ] && [ "$CERT_SECRET_ID" != "null" ]; then
+    log_info "Configuring SSL certificate from Key Vault: $CERT_NAME"
+    
+    # Check if SSL certificate is already added to Application Gateway
+    if ! az network application-gateway ssl-cert show --gateway-name "$AGW_NAME" --resource-group "$RESOURCE_GROUP" --name "$CERT_NAME" &>/dev/null; then
+        log_info "Adding SSL certificate to Application Gateway"
+        az network application-gateway ssl-cert create \
+            --gateway-name "$AGW_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$CERT_NAME" \
+            --key-vault-secret-id "$CERT_SECRET_ID"
+        log_success "Added SSL certificate to Application Gateway"
+    else
+        log_info "SSL certificate already configured in Application Gateway"
+    fi
+    
+    # Create frontend port for HTTPS
+    if ! az network application-gateway frontend-port show --gateway-name "$AGW_NAME" --resource-group "$RESOURCE_GROUP" --name "port_443" &>/dev/null; then
+        log_info "Creating HTTPS frontend port (443)"
+        az network application-gateway frontend-port create \
+            --gateway-name "$AGW_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "port_443" \
+            --port 443
+        log_success "Created HTTPS frontend port"
+    else
+        log_info "HTTPS frontend port already exists"
+    fi
 else
-    log_info "HTTPS frontend port 'port_443' already exists"
+    log_warning "SSL certificate not available. HTTPS configuration skipped."
 fi
 
-log_info "Common infrastructure deployment complete."
-log_info "Next step: Run 02-deploy-tenant-infra.sh for each tenant."
+# 12. Create Private Link Service for Application Gateway
+log_info "Creating Private Link Service for Application Gateway: ${AGW_NAME}-pls"
+PLS_NAME="${AGW_NAME}-pls"
+AGW_FRONTEND_IP_ID=$(az network application-gateway show \
+    --name "$AGW_NAME" \
+    --resource-group "$RESOURCE_GROUP" \
+    --query "frontendIPConfigurations[0].id" -o tsv)
+
+if ! az network private-link-service show --name "$PLS_NAME" --resource-group "$RESOURCE_GROUP" &>/dev/null; then
+    az network private-link-service create \
+        --name "$PLS_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --location "$LOCATION" \
+        --vnet-name "$VNET_NAME" \
+        --subnet "$APPGTWY_SUBNET_NAME" \
+        --lb-frontend-ip-configs "$AGW_FRONTEND_IP_ID" \
+        --visibility "All" \
+        --auto-approval "All" \
+        --fqdns "$AGW_NAME" \
+        --tags Environment="$ENVIRONMENT" Project="astra" \
+        --output table
+    log_success "Created Private Link Service: $PLS_NAME"
+else
+    log_info "Private Link Service already exists: $PLS_NAME"
+fi
+log_info "============================================================================"
+log_info "Common infrastructure deployment completed successfully"
+log_info "============================================================================"
+log_info "Next steps:"
+log_info "1. Run 02-deploy-tenant-infra.sh for each tenant (nbrly, bloom)"
+log_info "2. Run 03-deploy-tenant-resources.sh for Container Apps"
+log_info "3. Configure Application Gateway routing with 04-configure-routing.sh"
+log_info "============================================================================"

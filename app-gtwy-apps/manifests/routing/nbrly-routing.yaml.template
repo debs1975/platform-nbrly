@@ -1,0 +1,36 @@
+# Container Apps Environment HTTP Routing Configuration for NBRLY
+# Tenant: nbrly
+# SSL/TLS is enabled end-to-end: Application Gateway -> CAE -> Container Apps
+# Docs: https://learn.microsoft.com/en-us/azure/container-apps/rule-based-routing
+
+customDomains:
+  - name: "{{CUSTOM_DOMAIN}}"
+    certificateId: "{{CERTIFICATE_ID}}"
+    bindingType: "SniEnabled"
+
+rules:
+  # Rule for nbapp1: Route /app1 and /app1/* to nbapp1 container app
+  - description: "NBRLY App1 routing rule"
+    routes:
+      - match:
+          prefix: /app1
+    targets:
+      - containerApp: "ca-nbrly-nbapp1-dev"
+  
+  # Rule for nbapp2: Route /app2 and /app2/* to nbapp2 container app
+  - description: "NBRLY App2 routing rule"
+    routes:
+      - match:
+          prefix: /app2
+    targets:
+      - containerApp: "ca-nbrly-nbapp2-dev"
+
+# Placeholder Variables (replaced by configure-routing.sh):
+#   {{CUSTOM_DOMAIN}}    - nbrly-dev.astrapia.io
+#   {{CERTIFICATE_ID}}   - Resource ID of the certificate in CAE
+#
+# Container Apps:
+#   - ca-nbrly-nbapp1-dev (nbapp1)
+#   - ca-nbrly-nbapp2-dev (nbapp2)
+#
+# Note: Apps must handle the full path including /app1, /app2 prefixes

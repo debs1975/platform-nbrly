@@ -278,12 +278,12 @@ engine = create_engine(database_url)
 
 3. **Deploy container apps**:
    ```bash
-   ./deploy-all.sh
+   ./04-deploy-all.sh
    ```
 
 4. **Configure Application Gateway routing**:
    ```bash
-   ./configure-routing.sh
+   ./08-configure-routing.sh
    ```
 
 ### Verification

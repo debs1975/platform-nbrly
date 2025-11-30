@@ -1,0 +1,64 @@
+apiVersion: app/v1beta1
+kind: ContainerApp
+metadata:
+  name: ca-nbrly-nbapp1-dev
+  resourceGroup: astra-dev-eastus-rg
+spec:
+  environmentId: /subscriptions/984059e7-2907-4273-8569-703dddc5adfa/resourceGroups/astra-dev-eastus-rg/providers/Microsoft.App/managedEnvironments/
+  identity:
+    type: UserAssigned
+    userAssignedIdentities:
+      /subscriptions/984059e7-2907-4273-8569-703dddc5adfa/resourceGroups/astra-dev-eastus-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/: {}
+  configuration:
+    registries:
+      - server: astradeveastusacr.azurecr.io
+        identity: /subscriptions/984059e7-2907-4273-8569-703dddc5adfa/resourceGroups/astra-dev-eastus-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/
+    ingress:
+      external: false
+      targetPort: 8000
+      transport: http
+      allowInsecure: false
+    secrets: []
+  template:
+    containers:
+      - name: nbapp1
+        image: astradeveastusacr.azurecr.io/astradeveastusacr.azurecr.io/nbrly/nbapp1:latest
+        env:
+          - name: ENVIRONMENT
+            value: "dev"
+          - name: ROOT_PATH
+            value: "/app1"
+          - name: APP_NAME
+            value: "ca-nbrly-nbapp1-dev"
+          - name: TENANT
+            value: "nbrly"
+          - name: APP_TYPE
+            value: "nbapp1"
+          - name: AZURE_CLIENT_ID
+            value: ""
+          - name: PORT
+            value: "8000"
+        resources:
+          cpu: 0.5
+          memory: 1.0Gi
+        probes:
+          - type: Liveness
+            httpGet:
+              path: /health/live
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          - type: Readiness
+            httpGet:
+              path: /health/ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+    scale:
+      minReplicas: 1
+      maxReplicas: 3
+      rules:
+        - name: http-scaling
+          http:
+            metadata:
+              concurrentRequests: "100"

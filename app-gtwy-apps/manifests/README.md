@@ -1,36 +1,56 @@
 # Container Apps Deployment Manifests
 
-This directory contains the declarative YAML manifests for deploying the multi-tenant FastAPI applications to Azure Container Apps.
+This directory contains YAML manifest templates and documentation for deploying multi-tenant FastAPI applications to Azure Container Apps.
 
 ## Overview
 
-Manifests are **generated from templates** using configuration files. This ensures consistency and eliminates manual errors.
+**All generated manifests are now in `.generated/`** - this keeps templates, configuration, and generated files cleanly separated.
 
 ### Workflow
 ```
-templates/*.yaml.template + config/*.json → generate-manifests.sh → manifests/*/containerapp.yaml
+manifests/templates/*.yaml.template + config/*.json
+    ↓ (generate-manifests.sh)
+manifests/.generated/*.yaml
+    ↓ (07-deploy-yaml.sh)
+Azure Container Apps
 ```
 
 ## Directory Structure
 
 ```
-manifests/
+manifests/                              # Templates and documentation only
 ├── README.md                           # This file
-├── templates/                          # Template files (committed)
+├── .gitignore                         # Ignores generated YAML in subdirs
+├── .bak/                              # Automatic backups of generated files
+│   ├── README.md                      # Backup documentation
+│   └── YYYYMMDD_HHMMSS/              # Timestamped backups
+│       ├── nbrly-nbapp1.yaml
+│       ├── nbrly-nbapp2.yaml
+│       ├── bloom-bmapp1.yaml
+│       └── bloom-bmapp2.yaml
+├── .generated/                        # Generated manifests (git-ignored)
+│   ├── .gitignore                     # Ignores all *.yaml files
+│   ├── README.md                      # Generation documentation
+│   ├── nbrly-nbapp1.yaml              # Generated from basic template
+│   ├── nbrly-nbapp2.yaml              # Generated from database template
+│   ├── bloom-bmapp1.yaml              # Generated from basic template
+│   ├── bloom-bmapp2.yaml              # Generated from database template
+│   └── routing/                       # Generated routing configs
+│       ├── nbrly-routing.yaml
+│       ├── bloom-routing.yaml
+│       └── application-gateway-complete.yaml
+├── templates/                          # Template files (committed to git)
 │   ├── README.md                      # Template documentation
 │   ├── containerapp-basic.yaml.template
 │   └── containerapp-with-database.yaml.template
-├── nbrly/                             # NBRLY tenant manifests (generated)
-│   ├── nbapp1-containerapp.yaml      # Generated from basic template
-│   └── nbapp2-containerapp.yaml      # Generated from database template
-└── bloom/                             # BLOOM tenant manifests (generated)
-    ├── bmapp1-containerapp.yaml      # Generated from basic template
-    └── bmapp2-containerapp.yaml      # Generated from database template
+└── routing/                           # Routing documentation
+    └── README.md                      # Routing configuration docs
 ```
 
 **Important**: 
-- `templates/` directory: Committed to git (source of truth for structure)
-- `nbrly/` and `bloom/` manifests: Generated files (may be git-ignored)
+- `manifests/templates/`: Committed to git (source of truth for structure)
+- `manifests/.generated/`: All generated YAML files (git-ignored, regenerated on each deployment)
+- `manifests/.bak/`: Automatic backups before regeneration (git-ignored)
 - Configuration files (`config/`): Committed to git (source of truth for values)
 
 ## Manifest Generation
@@ -39,7 +59,7 @@ manifests/
 Manifests are automatically generated when deploying:
 ```bash
 cd ../scripts
-./deploy-yaml.sh [TAG]
+./07-deploy-yaml.sh [TAG]
 ```
 
 The deployment script:
@@ -55,7 +75,28 @@ cd ../scripts/helpers
 ./generate-manifests.sh
 ```
 
-This creates all 4 Container App manifests in `manifests/nbrly/` and `manifests/bloom/`.
+This creates all 4 Container App manifests in `manifests/.generated/`.
+
+**Note**: Existing manifests are automatically backed up to `manifests/.bak/<timestamp>/` before new ones are generated.
+
+### Manifest Backups
+
+Before generating new manifests, the system automatically backs up existing ones:
+
+- **Backup Location**: `manifests/.bak/<timestamp>/`
+- **Timestamp Format**: `YYYYMMDD_HHMMSS` (e.g., `20251122_143025`)
+- **Contents**: Complete copy of all existing manifests organized by tenant
+
+**Restoring from backup**:
+```bash
+# List available backups
+ls -lt manifests/.bak/
+
+# Restore specific backup (if needed)
+cp -r manifests/.bak/20251122_143025/*.yaml manifests/.generated/
+```
+
+See [.bak/README.md](.bak/README.md) for detailed backup documentation.
 
 ### Template System
 See [templates/README.md](templates/README.md) for detailed documentation on:
@@ -98,7 +139,7 @@ HTTP-based scaling triggers when concurrent requests exceed 100.
 The automated deployment script handles everything:
 ```bash
 cd ../scripts
-./deploy-yaml.sh [TAG]
+./07-deploy-yaml.sh [TAG]
 ```
 
 This will:
@@ -127,7 +168,7 @@ az containerapp create --resource-group rg-astrapia-dev --yaml bloom/bmapp2-cont
 ```bash
 # Use the shell scripts which programmatically create the same configuration
 cd ../scripts
-./deploy-all.sh latest
+./04-deploy-all.sh latest
 ```
 
 ## Environment Variables
@@ -292,7 +333,7 @@ template:
 ```
 
 ### Custom Domains (via Application Gateway)
-These Container Apps use internal ingress. External access is provided through Application Gateway routing configured in `../scripts/configure-routing.sh`.
+These Container Apps use internal ingress. External access is provided through Application Gateway routing configured in `../scripts/08-configure-routing.sh`.
 
 ## Security Considerations
 
@@ -339,5 +380,5 @@ configuration:
 1. **Deploy Infrastructure**: Ensure Container App Environment exists
 2. **Build Images**: Use `../scripts/build-push-all.sh` to create images
 3. **Deploy Apps**: Use these YAML manifests or deployment scripts
-4. **Configure Routing**: Use `../scripts/configure-routing.sh` for Application Gateway
+4. **Configure Routing**: Use `../scripts/08-configure-routing.sh` for Application Gateway
 5. **Test Access**: Verify routing through Application Gateway domains

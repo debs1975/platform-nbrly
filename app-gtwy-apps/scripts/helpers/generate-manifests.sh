@@ -11,8 +11,10 @@ source "$SCRIPT_DIR/config-loader.sh"
 
 # Configuration
 ENV=${ENV:-"dev"}
+TENANT=${1:-"all"}  # Accept tenant parameter: nbrly, bloom, or all
 TEMPLATES_DIR="$SCRIPT_DIR/../../manifests/templates"
-OUTPUT_DIR="$SCRIPT_DIR/../../manifests"
+OUTPUT_DIR="$SCRIPT_DIR/../../manifests/.generated"
+BACKUP_DIR="$SCRIPT_DIR/../../manifests/.bak"
 
 # Colors for output
 RED='\033[0;31m'
@@ -43,6 +45,47 @@ get_subscription_id() {
     az account show --query id --output tsv 2>/dev/null || echo "{subscription-id}"
 }
 
+# Backup existing manifests
+backup_manifests() {
+    local timestamp=$(date +'%Y%m%d_%H%M%S')
+    local backup_subdir="$BACKUP_DIR/$timestamp"
+    
+    log "Checking for existing manifests to backup..."
+    
+    # Check if any manifests exist
+    local has_manifests=false
+    if [ -d "$OUTPUT_DIR" ] && [ -n "$(ls -A "$OUTPUT_DIR"/*.yaml 2>/dev/null)" ]; then
+        has_manifests=true
+    fi
+    
+    if [ "$has_manifests" = false ]; then
+        log "No existing manifests found, skipping backup"
+        return 0
+    fi
+    
+    # Create backup directory
+    mkdir -p "$backup_subdir"
+    
+    # Backup existing manifests
+    local backup_count=0
+    if [ -d "$OUTPUT_DIR" ]; then
+        for manifest in "$OUTPUT_DIR"/*.yaml; do
+            if [ -f "$manifest" ]; then
+                mkdir -p "$backup_subdir"
+                cp "$manifest" "$backup_subdir/"
+                ((backup_count++))
+                log "  Backed up: $(basename "$manifest")"
+            fi
+        done
+    fi
+    
+    if [ $backup_count -gt 0 ]; then
+        success "Backed up $backup_count manifest(s) to: $backup_subdir"
+    fi
+    
+    return 0
+}
+
 # Generate manifest from template
 generate_manifest() {
     local tenant=$1
@@ -52,21 +95,25 @@ generate_manifest() {
     
     log "Generating manifest for $tenant/$app_key"
     
-    # Get configuration values
-    local resource_group=$(get_global_value "$ENV" ".resourceGroup")
-    local acr_name=$(get_global_value "$ENV" ".containerRegistry")
+    # Get configuration values from infra config
+    local resource_group=$(get_infra_value "$ENV" ".resources.resourceGroup.name")
+    local acr_name=$(get_infra_value "$ENV" ".resources.containerRegistry.name")
     local acr_registry="${acr_name}.azurecr.io"
-    local container_app_env=$(get_tenant_value "$tenant" "$ENV" ".containerAppEnvironment")
-    local key_vault_name=$(get_global_value "$ENV" ".keyVault.name")
+    local container_app_env=$(get_infra_value "$ENV" ".resources.tenants.${tenant}.containerAppEnv.name")
+    local key_vault_name=$(get_infra_value "$ENV" ".resources.keyVault.name")
     local subscription_id=$(get_subscription_id)
     
-    # Get UAMI configuration
-    local uami_name=$(get_tenant_value "$tenant" "$ENV" ".managedIdentity.name")
-    local uami_client_id=$(get_tenant_value "$tenant" "$ENV" ".managedIdentity.clientId")
+    # Get UAMI configuration from infra config
+    local uami_name=$(get_infra_value "$ENV" ".resources.tenants.${tenant}.managedIdentity.name")
+    local uami_resource_id=$(get_infra_value "$ENV" ".resources.tenants.${tenant}.managedIdentity.id")
+    # Get client ID from Azure (since it's not in config)
+    local uami_client_id=$(az identity show --ids "$uami_resource_id" --query clientId -o tsv 2>/dev/null || echo "")
     
     # Get application configuration
     local app_name=$(get_app_config "$tenant" "$app_key" "$ENV" "name")
     local image_name=$(get_app_config "$tenant" "$app_key" "$ENV" "image")
+    # Remove ACR server prefix if present (config has full path, template adds it)
+    image_name="${image_name#${acr_registry}/}"
     local root_path=$(get_app_config "$tenant" "$app_key" "$ENV" "rootPath")
     local cpu=$(get_app_config "$tenant" "$app_key" "$ENV" "cpu")
     local memory=$(get_app_config "$tenant" "$app_key" "$ENV" "memory")
@@ -129,22 +176,31 @@ generate_manifest() {
 
 # Generate all manifests
 generate_all_manifests() {
-    log "Generating all Container App manifests from templates"
+    log "Generating Container App manifests from templates"
     log "Environment: $ENV"
+    log "Tenant: $TENANT"
     log "Templates Directory: $TEMPLATES_DIR"
     log "Output Directory: $OUTPUT_DIR"
+    
+    # Backup existing manifests first
+    backup_manifests
     
     local success_count=0
     local total_count=0
     
-    # Generate each manifest
+    # Generate each manifest based on tenant parameter
     # Format: tenant app template_name
-    local apps=(
-        "nbrly nbapp1 containerapp-basic.yaml.template"
-        "nbrly nbapp2 containerapp-with-database.yaml.template"
-        "bloom bmapp1 containerapp-basic.yaml.template"
-        "bloom bmapp2 containerapp-with-database.yaml.template"
-    )
+    local apps=()
+    
+    if [ "$TENANT" = "all" ] || [ "$TENANT" = "nbrly" ]; then
+        apps+=("nbrly nbapp1 containerapp-basic.yaml.template")
+        apps+=("nbrly nbapp2 containerapp-with-database.yaml.template")
+    fi
+    
+    if [ "$TENANT" = "all" ] || [ "$TENANT" = "bloom" ]; then
+        apps+=("bloom bmapp1 containerapp-basic.yaml.template")
+        apps+=("bloom bmapp2 containerapp-with-database.yaml.template")
+    fi
     
     for app_config in "${apps[@]}"; do
         ((total_count++))
@@ -153,7 +209,7 @@ generate_all_manifests() {
         read -r tenant app_key template_name <<< "$app_config"
         
         local template_file="$TEMPLATES_DIR/$template_name"
-        local output_file="$OUTPUT_DIR/$tenant/${app_key}-containerapp.yaml"
+        local output_file="$OUTPUT_DIR/${tenant}-${app_key}.yaml"
         
         if generate_manifest "$tenant" "$app_key" "$template_file" "$output_file"; then
             ((success_count++))
@@ -171,15 +227,20 @@ generate_all_manifests() {
         
         log ""
         log "Generated manifests:"
-        echo "  - manifests/nbrly/nbapp1-containerapp.yaml"
-        echo "  - manifests/nbrly/nbapp2-containerapp.yaml"
-        echo "  - manifests/bloom/bmapp1-containerapp.yaml"
-        echo "  - manifests/bloom/bmapp2-containerapp.yaml"
+        # List only the manifests that were actually generated
+        for app_config in "${apps[@]}"; do
+            read -r tenant app_key template_name <<< "$app_config"
+            echo "  - manifests/.generated/${tenant}-${app_key}.yaml"
+        done
         
         log ""
         log "Next steps:"
         log "1. Review generated manifests"
-        log "2. Deploy using: cd ../../scripts && ./deploy-yaml.sh"
+        if [ "$TENANT" = "all" ]; then
+            log "2. Deploy using: cd ../../scripts && ./07-deploy-yaml.sh"
+        else
+            log "2. Deploy using: cd ../../scripts && ./08-deploy-yaml-${TENANT}.sh latest"
+        fi
         
         return 0
     else

@@ -1,208 +1,187 @@
 #!/bin/bash
 
-# Usage: ./03-deploy-tenant-resources.sh <tenant> <project> [environment]
-# Example: ./03-deploy-tenant-resources.sh nbrly astra dev
-# Example: ./03-deploy-tenant-resources.sh bloom astra dev
+# =============================================================================
+# Tenant Resources Deployment Script
+# Creates Container App Environment and related resources for a specific tenant
+# =============================================================================
 
-# Exit immediately if a command exits with a non-zero status
-set -e
+set -euo pipefail
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Source helper scripts
-source "${SCRIPT_DIR}/helpers/logging.sh"
-source "${SCRIPT_DIR}/helpers/azure-login.sh"
-
-# Trap errors and print error message
-trap 'log_error "Script failed at line $LINENO with exit code $?"' ERR
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Get tenant name parameter (required)
-TENANT=${1}
+TENANT=${1:-""}
 if [ -z "$TENANT" ]; then
-  log_error "Tenant name is required"
-  log_error "Usage: ./03-deploy-tenant-resources.sh <tenant> <project> [dev|stage|prod]"
-  log_error "Example: ./03-deploy-tenant-resources.sh nbrly astra dev"
-  exit 1
-fi
-
-# Get project name parameter (required)
-PROJECT=${2}
-if [ -z "$PROJECT" ]; then
-  log_error "Project name is required"
-  log_error "Usage: ./03-deploy-tenant-resources.sh <tenant> <project> [dev|stage|prod]"
-  log_error "Example: ./03-deploy-tenant-resources.sh nbrly astra dev"
-  exit 1
-fi
-
-# Get environment parameter (default to dev if not provided)
-ENV=${3:-dev}
-
-# Validate environment
-if [[ ! "$ENV" =~ ^(dev|stage|prod)$ ]]; then
-  log_error "Invalid environment: $ENV"
-  log_error "Usage: ./03-deploy-tenant-resources.sh <tenant> <project> [dev|stage|prod]"
-  exit 1
+    echo "ERROR: Tenant name is required"
+    echo "Usage: ./03-deploy-tenant-resources.sh <tenant>"
+    echo "Example: ./03-deploy-tenant-resources.sh nbrly"
+    echo "         ./03-deploy-tenant-resources.sh bloom"
+    exit 1
 fi
 
 # Validate tenant
 if [[ ! "$TENANT" =~ ^(nbrly|bloom)$ ]]; then
-  log_error "Invalid tenant: $TENANT (must be 'nbrly' or 'bloom')"
-  exit 1
+    echo "ERROR: Invalid tenant: $TENANT (must be 'nbrly' or 'bloom')"
+    exit 1
 fi
 
-log_info "Deploying ${TENANT} tenant resources for project: $PROJECT, environment: $ENV"
+# Configuration files
+CONFIG_DIR="$PROJECT_ROOT/config"
+PARAMETERS_FILE="$CONFIG_DIR/parameters-dev.json"
+INFRA_FILE="$CONFIG_DIR/infra-dev.json"
+TENANT_CONFIG="$CONFIG_DIR/${TENANT}/parameters-dev.json"
 
-# Load common and tenant parameters
-COMMON_CONFIG="${SCRIPT_DIR}/../config/parameters-${ENV}.json"
-TENANT_CONFIG="${SCRIPT_DIR}/../config/${TENANT}/parameters-${ENV}.json"
+# Source helper functions
+source "$SCRIPT_DIR/helpers/logging.sh"
+source "$SCRIPT_DIR/helpers/config-parser.sh"
+source "$SCRIPT_DIR/helpers/azure-login.sh"
 
-if [ ! -f "$COMMON_CONFIG" ]; then
-  log_error "Common configuration file not found: $COMMON_CONFIG"
-  exit 1
+# Setup logging
+setup_logging "tenant-$TENANT" "dev"
+
+# Trap errors
+trap 'log_error "Script failed at line $LINENO with exit code $?"' ERR
+
+log_info "============================================================================"
+log_info "Starting tenant resources deployment for: $TENANT"
+log_info "============================================================================"
+
+# Validate configuration files
+if [ ! -f "$PARAMETERS_FILE" ]; then
+    log_error "Parameters file not found: $PARAMETERS_FILE"
+    exit 1
+fi
+
+if [ ! -f "$INFRA_FILE" ]; then
+    log_error "Infrastructure file not found: $INFRA_FILE"
+    exit 1
 fi
 
 if [ ! -f "$TENANT_CONFIG" ]; then
-  log_error "Tenant configuration file not found: $TENANT_CONFIG"
-  exit 1
+    log_error "Tenant configuration file not found: $TENANT_CONFIG"
+    exit 1
 fi
 
-# Load top-level scalar values from configs (skip nested objects)
-while IFS="=" read -r key value; do
-  export "$key"="$value"
-done < <(jq -r 'to_entries | .[] | select(.value | type != "object") | "\(.key)=\(.value)"' "$COMMON_CONFIG")
+# Parse configuration
+SUBSCRIPTION_ID=$(parse_config "$INFRA_FILE" ".subscription.id")
+RESOURCE_GROUP=$(parse_config "$INFRA_FILE" ".resourceGroup.name")
+LOCATION=$(parse_config "$PARAMETERS_FILE" ".location")
+VNET_NAME=$(parse_config "$INFRA_FILE" ".networking.virtualNetwork.name")
 
-while IFS="=" read -r key value; do
-  export "$key"="$value"
-done < <(jq -r 'to_entries | .[] | select(.value | type != "object") | "\(.key)=\(.value)"' "$TENANT_CONFIG")
+# Tenant-specific configuration
+TENANT_NAME=$(parse_config "$TENANT_CONFIG" ".tenantName")
+TENANT_DISPLAY_NAME=$(parse_config "$TENANT_CONFIG" ".tenantDisplayName")
+DOMAIN=$(parse_config "$TENANT_CONFIG" ".domain")
 
-# Override project and env variables with parameters (takes precedence)
-project="$PROJECT"
-env="$ENV"
-region="${region:-eastus}"
+# Container App Environment configuration
+CAE_NAME=$(parse_config "$TENANT_CONFIG" ".containerAppEnvironment.name")
+CAE_SUBNET=$(parse_config "$TENANT_CONFIG" ".containerAppEnvironment.subnet")
+CAE_DEFAULT_DOMAIN=$(parse_config "$TENANT_CONFIG" ".containerAppEnvironment.defaultDomain")
 
-log_info "Loaded configuration - Tenant: $tenantName, Project: $project, Environment: $env"
+# Managed Identity configuration
+UAMI_NAME=$(parse_config "$TENANT_CONFIG" ".managedIdentity.name")
 
-# Define the output files
-output_file="${SCRIPT_DIR}/../config/.generated/generated-infra-${ENV}.json"
-infra_file="${SCRIPT_DIR}/../config/infra-${ENV}.json"
+# Private DNS Zone configuration
+PRIVATE_DNS_ZONE=$(parse_config "$TENANT_CONFIG" ".privateDnsZone.name")
+VNET_LINK_NAME=$(parse_config "$TENANT_CONFIG" ".privateDnsZone.vnetLinkName")
 
-# Create backups of state files at the start
-timestamp=$(date +"%Y%m%d-%H%M%S")
-backup_dir_generated="${SCRIPT_DIR}/../config/.generated/.bak"
-backup_dir_config="${SCRIPT_DIR}/../config/.bak"
-mkdir -p "$backup_dir_generated" "$backup_dir_config"
-
-if [ -f "$output_file" ]; then
-  backup_file="${backup_dir_generated}/$(basename "$output_file").backup-${timestamp}"
-  cp "$output_file" "$backup_file"
-  log_info "Created backup: $backup_file"
-fi
+log_info "Configuration loaded successfully:"
+log_info "  Tenant: $TENANT_DISPLAY_NAME ($TENANT_NAME)"
+log_info "  Domain: $DOMAIN"
+log_info "  Container App Environment: $CAE_NAME"
+log_info "  Managed Identity: $UAMI_NAME"
+log_info "  Private DNS Zone: $PRIVATE_DNS_ZONE"
 
 if [ -f "$infra_file" ]; then
   backup_file="${backup_dir_config}/$(basename "$infra_file").backup-${timestamp}"
   cp "$infra_file" "$backup_file"
   log_info "Created backup: $backup_file"
-fi
-
-# Variables
-rgName=$(jq -r '.common.resourceGroupName' "$output_file")
-vnetName=$(jq -r '.common.vnetName' "$output_file")
-kvName=$(jq -r '.common.keyVaultName' "$output_file")
-acrName=$(jq -r '.common.acrName' "$output_file")
-lawId=$(jq -r '.common.logAnalyticsWorkspaceId' "$output_file")
-
-# Derive tenant resource names from project, tenant, and environment
-caeSubnetName="snet-${tenantName}-${env}-cae"
-caeName="${tenantName}-${env}-cae"
-uamiName="${tenantName}-${env}-uami"
-psqlName="${tenantName}-${env}-psql"
-
-# Print all inferred variables before deployment
-log_info "======================================================"
-log_info "Inferred Tenant Resource Names (${tenantName}):"
-log_info "======================================================"
-log_info "Project:              $project"
-log_info "Tenant:               $tenantName"
-log_info "Environment:          $env"
-log_info "Region:               $region"
-log_info "CAE Subnet:           $caeSubnetName"
-log_info "CAE Subnet Prefix:    $caeSubnetPrefix"
-log_info "Container App Env:    $caeName"
-log_info "Managed Identity:     $uamiName"
-log_info "PostgreSQL Server:    $psqlName"
-log_info "Domain Name:          $domainName"
-log_info "======================================================"
-
 # Login to Azure
 azure_login
 
-# 1. Create Tenant Subnet
-log_info "Checking if subnet ${caeSubnetName} exists..."
-subnetId=$(az network vnet subnet show \
-    --name "$caeSubnetName" \
-    --vnet-name "$vnetName" \
-    --resource-group "$rgName" \
-    --query "id" -o tsv 2>/dev/null || true)
+# Set Azure subscription
+log_info "Setting Azure subscription to: $SUBSCRIPTION_ID"
+az account set --subscription "$SUBSCRIPTION_ID"
 
-if [ -z "$subnetId" ]; then
-    log_info "Creating subnet for tenant ${tenantName}: ${caeSubnetName}"
-    subnetId=$(az network vnet subnet create \
-        --name "$caeSubnetName" \
-        --vnet-name "$vnetName" \
-        --resource-group "$rgName" \
-        --address-prefixes "$caeSubnetPrefix" \
-        --delegations "Microsoft.App/environments" \
-        --query "id" -o tsv)
-    log_success "Created subnet: ${caeSubnetName}"
+# 1. Create User-Assigned Managed Identity
+log_info "Creating User-Assigned Managed Identity: $UAMI_NAME"
+if ! az identity show --name "$UAMI_NAME" --resource-group "$RESOURCE_GROUP" &>/dev/null; then
+    az identity create \
+        --name "$UAMI_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --location "$LOCATION" \
+        --tags Environment="dev" Project="astra" Tenant="$TENANT_NAME" \
+        --output table
+    log_success "Created Managed Identity: $UAMI_NAME"
+    # Wait for Azure AD replication
+    log_info "Waiting 30 seconds for Managed Identity replication..."
+    sleep 30
 else
-    log_info "Subnet ${caeSubnetName} already exists"
+    log_info "Managed Identity already exists: $UAMI_NAME"
 fi
 
-jq --arg tenant "$tenantName" --arg subnetName "$caeSubnetName" --arg subnetId "$subnetId" --arg subnetPrefix "$caeSubnetPrefix" --arg hostName "$domainName" \
-   '.tenants[$tenant] += {subnetName: $subnetName, subnetId: $subnetId, subnetPrefix: $subnetPrefix, hostName: $hostName}' \
-   "$output_file" > tmp.$$.json && mv tmp.$$.json "$output_file"
-# Update infra tracking file (ensure .resources.tenants exists)
-jq --arg tenant "$tenantName" --arg subnetName "$caeSubnetName" --arg subnetId "$subnetId" --arg subnetPrefix "$caeSubnetPrefix" --arg hostName "$domainName" \
-   '.resources.tenants //= {} | .resources.tenants[$tenant] += {subnet: {name: $subnetName, id: $subnetId, addressPrefix: $subnetPrefix}, hostName: $hostName}' \
-   "$infra_file" > tmp.$$.json && mv tmp.$$.json "$infra_file"
+# Get UAMI Principal ID for role assignments
+UAMI_PRINCIPAL_ID=$(az identity show --name "$UAMI_NAME" --resource-group "$RESOURCE_GROUP" --query "principalId" -o tsv)
 
-# 2. Create User-Assigned Managed Identity
-log_info "Checking if User-Assigned Managed Identity ${uamiName} exists..."
-uamiId=$(az identity show --name "$uamiName" --resource-group "$rgName" --query "id" -o tsv 2>/dev/null || true)
-
-uamiCreated=false
-if [ -z "$uamiId" ]; then
-    log_info "Creating User-Assigned Managed Identity: ${uamiName}"
-    uamiId=$(az identity create --name "$uamiName" --resource-group "$rgName" --query "id" -o tsv)
-    uamiCreated=true
-    log_success "Created Managed Identity: ${uamiName}"
+# 2. Create Container App Environment
+log_info "Creating Container App Environment: $CAE_NAME"
+if ! az containerapp env show --name "$CAE_NAME" --resource-group "$RESOURCE_GROUP" &>/dev/null; then
+    az containerapp env create \
+        --name "$CAE_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --location "$LOCATION" \
+        --infrastructure-subnet-resource-id "$(parse_config "$INFRA_FILE" ".networking.subnets.${TENANT}CAE.id")" \
+        --internal-only true \
+        --tags Environment="dev" Project="astra" Tenant="$TENANT_NAME" \
+        --output table
+    log_success "Created Container App Environment: $CAE_NAME"
 else
-    log_info "User-Assigned Managed Identity ${uamiName} already exists"
+    log_info "Container App Environment already exists: $CAE_NAME"
 fi
 
-uamiPrincipalId=$(az identity show --name "$uamiName" --resource-group "$rgName" --query "principalId" -o tsv || true)
-
-# If UAMI was just created, wait for Azure AD replication
-if [ "$uamiCreated" = true ]; then
-    log_info "Waiting 15 seconds for Managed Identity replication to Azure AD..."
-    sleep 15
+# 3. Create Private DNS Zone for Container App Environment
+log_info "Creating Private DNS Zone: $PRIVATE_DNS_ZONE"
+if ! az network private-dns zone show --name "$PRIVATE_DNS_ZONE" --resource-group "$RESOURCE_GROUP" &>/dev/null; then
+    az network private-dns zone create \
+        --name "$PRIVATE_DNS_ZONE" \
+        --resource-group "$RESOURCE_GROUP" \
+        --tags Environment="dev" Project="astra" Tenant="$TENANT_NAME" \
+        --output table
+    log_success "Created Private DNS Zone: $PRIVATE_DNS_ZONE"
+else
+    log_info "Private DNS Zone already exists: $PRIVATE_DNS_ZONE"
 fi
-jq --arg tenant "$tenantName" --arg uamiName "$uamiName" --arg uamiId "$uamiId" \
-   '.tenants[$tenant] += {managedIdentityName: $uamiName, managedIdentityId: $uamiId}' \
-   "$output_file" > tmp.$$.json && mv tmp.$$.json "$output_file"
-# Update infra tracking file (ensure .resources.tenants exists)
-jq --arg tenant "$tenantName" --arg uamiName "$uamiName" --arg uamiId "$uamiId" \
-   '.resources.tenants //= {} | .resources.tenants[$tenant] += {managedIdentity: {name: $uamiName, id: $uamiId}}' \
-   "$infra_file" > tmp.$$.json && mv tmp.$$.json "$infra_file"
 
-# Check if AcrPull role assignment exists
-log_info "Checking if UAMI has AcrPull role on ACR..."
-acrId=$(jq -r '.common.acrId' "$output_file")
-roleAssignment=$(az role assignment list \
-    --assignee "$uamiPrincipalId" \
-    --role "AcrPull" \
-    --scope "$acrId" \
+# 4. Create VNet Link for Private DNS Zone
+log_info "Creating VNet Link for Private DNS Zone: $VNET_LINK_NAME"
+if ! az network private-dns link vnet show --name "$VNET_LINK_NAME" --zone-name "$PRIVATE_DNS_ZONE" --resource-group "$RESOURCE_GROUP" &>/dev/null; then
+    az network private-dns link vnet create \
+        --name "$VNET_LINK_NAME" \
+        --zone-name "$PRIVATE_DNS_ZONE" \
+        --resource-group "$RESOURCE_GROUP" \
+        --virtual-network "$VNET_NAME" \
+        --registration-enabled false \
+        --tags Environment="dev" Project="astra" Tenant="$TENANT_NAME" \
+        --output table
+    log_success "Created VNet Link: $VNET_LINK_NAME"
+else
+    log_info "VNet Link already exists: $VNET_LINK_NAME"
+fi
+
+# 5. Assign AcrPull role to UAMI for Container Registry
+ACR_ID=$(parse_config "$INFRA_FILE" ".containerRegistry.id")
+log_info "Assigning AcrPull role to UAMI for Container Registry"
+if ! az role assignment list --assignee "$UAMI_PRINCIPAL_ID" --role "AcrPull" --scope "$ACR_ID" --query "[0].id" -o tsv &>/dev/null; then
+    az role assignment create \
+        --assignee "$UAMI_PRINCIPAL_ID" \
+        --role "AcrPull" \
+        --scope "$ACR_ID"
+    log_success "Assigned AcrPull role to UAMI"
+else
+    log_info "UAMI already has AcrPull role on Container Registry"
+fi
     --query "[0].id" -o tsv 2>/dev/null || true)
 
 if [ -z "$roleAssignment" ]; then
@@ -218,107 +197,53 @@ else
 fi
 
 # Assign Key Vault Secrets User role to UAMI for reading secrets
-log_info "Checking if UAMI has Key Vault Secrets User role..."
-kvId=$(jq -r '.common.keyVaultId' "$output_file")
-kvSecretsRole=$(az role assignment list \
-    --assignee "$uamiPrincipalId" \
-    --role "Key Vault Secrets User" \
-    --scope "$kvId" \
-    --query "[0].id" -o tsv 2>/dev/null || true)
-
-if [ -z "$kvSecretsRole" ]; then
-    log_info "Granting UAMI 'Key Vault Secrets User' role"
+# 6. Assign Key Vault Secrets User role to UAMI
+KV_ID=$(parse_config "$INFRA_FILE" ".keyVault.id")
+log_info "Assigning Key Vault Secrets User role to UAMI"
+if ! az role assignment list --assignee "$UAMI_PRINCIPAL_ID" --role "Key Vault Secrets User" --scope "$KV_ID" --query "[0].id" -o tsv &>/dev/null; then
     az role assignment create \
-        --assignee-object-id "$uamiPrincipalId" \
-        --assignee-principal-type "ServicePrincipal" \
+        --assignee "$UAMI_PRINCIPAL_ID" \
         --role "Key Vault Secrets User" \
-        --scope "$kvId"
-    log_success "Assigned 'Key Vault Secrets User' role to UAMI"
+        --scope "$KV_ID"
+    log_success "Assigned Key Vault Secrets User role to UAMI"
 else
-    log_info "UAMI already has 'Key Vault Secrets User' role"
+    log_info "UAMI already has Key Vault Secrets User role"
 fi
 
-# 3. Deploy PostgreSQL Database (COMMENTED OUT - Region restriction issue)
-# log_info "Checking if PostgreSQL server ${psqlName} exists..."
-# psqlId=$(az postgres flexible-server show --name "$psqlName" --resource-group "$rgName" --query "id" -o tsv 2>/dev/null || true)
-# 
-# if [ -z "$psqlId" ]; then
-#     log_info "Deploying PostgreSQL server: ${psqlName}"
-#     psqlOutput=$(az postgres flexible-server create \
-#         --name "$psqlName" \
-#         --resource-group "$rgName" \
-#         --location "$region" \
-#         --admin-user "psqladmin" \
-#         --admin-password "yourStrongPassword123!" \
-#         --subnet "$subnetId" \
-#         --yes)
-#     psqlId=$(echo "$psqlOutput" | jq -r '.id')
-#     psqlConnectionString=$(echo "$psqlOutput" | jq -r '.connectionString')
-#     
-#     log_info "Storing PostgreSQL connection string in Key Vault"
-#     az keyvault secret set \
-#         --vault-name "$kvName" \
-#         --name "${psqlName}-connection-string" \
-#         --value "$psqlConnectionString"
-#     log_success "Created PostgreSQL server: ${psqlName}"
-# else
-#     log_info "PostgreSQL server ${psqlName} already exists"
-#     psqlId=$(az postgres flexible-server show --name "$psqlName" --resource-group "$rgName" --query "id" -o tsv || true)
-# fi
-# 
-# jq --arg tenant "$tenantName" --arg psqlName "$psqlName" --arg psqlId "$psqlId" \
-#    '.tenants[$tenant].postgresServerName = $psqlName | .tenants[$tenant].postgresServerId = $psqlId' \
-#    "$output_file" > tmp.$$.json && mv tmp.$$.json "$output_file"
-# # Update infra tracking file (ensure .resources.tenants exists)
-# jq --arg tenant "$tenantName" --arg psqlName "$psqlName" --arg psqlId "$psqlId" \
-#    '.resources.tenants //= {} | .resources.tenants[$tenant].postgresServer = {name: $psqlName, id: $psqlId}' \
-#    "$infra_file" > tmp.$$.json && mv tmp.$$.json "$infra_file"
+# 7. Update Configuration Files
+log_info "Updating configuration files with deployed resources..."
 
-log_info "Skipping PostgreSQL deployment (commented out due to region restrictions)"
+# Get deployed resource details
+UAMI_ID=$(az identity show --name "$UAMI_NAME" --resource-group "$RESOURCE_GROUP" --query "id" -o tsv)
+CAE_ID=$(az containerapp env show --name "$CAE_NAME" --resource-group "$RESOURCE_GROUP" --query "id" -o tsv)
+CAE_STATIC_IP=$(az containerapp env show --name "$CAE_NAME" --resource-group "$RESOURCE_GROUP" --query "properties.staticIp" -o tsv)
+CAE_DEFAULT_DOMAIN=$(az containerapp env show --name "$CAE_NAME" --resource-group "$RESOURCE_GROUP" --query "properties.defaultDomain" -o tsv)
 
-# 4. Deploy Container App Environment
-log_info "Checking if Container App Environment ${caeName} exists..."
-caeId=$(az containerapp env show --name "$caeName" --resource-group "$rgName" --query "id" -o tsv 2>/dev/null || true)
+# Update tenant configuration file
+update_config "$TENANT_CONFIG_FILE" ".managedIdentity.name" "$UAMI_NAME"
+update_config "$TENANT_CONFIG_FILE" ".managedIdentity.id" "$UAMI_ID"
+update_config "$TENANT_CONFIG_FILE" ".containerAppEnvironment.name" "$CAE_NAME"
+update_config "$TENANT_CONFIG_FILE" ".containerAppEnvironment.id" "$CAE_ID"
+update_config "$TENANT_CONFIG_FILE" ".containerAppEnvironment.staticIp" "$CAE_STATIC_IP"
+update_config "$TENANT_CONFIG_FILE" ".containerAppEnvironment.defaultDomain" "$CAE_DEFAULT_DOMAIN"
+update_config "$TENANT_CONFIG_FILE" ".privateDns.zoneName" "$PRIVATE_DNS_ZONE"
+update_config "$TENANT_CONFIG_FILE" ".privateDns.vnetLinkName" "$VNET_LINK_NAME"
 
-if [ -z "$caeId" ]; then
-    log_info "Creating Container App Environment: ${caeName}"
-    
-    # Get Log Analytics workspace customer ID from generated-infra (already stored)
-    lawCustomerId=$(jq -r '.common.logAnalyticsCustomerId' "$output_file")
-    
-    # Retrieve Log Analytics workspace shared key (not stored for security reasons)
-    lawName=$(jq -r '.common.logAnalyticsWorkspaceName' "$output_file")
-    log_info "Retrieving Log Analytics workspace shared key for ${lawName}..."
-    lawSharedKey=$(az monitor log-analytics workspace get-shared-keys \
-        --resource-group "$rgName" \
-        --workspace-name "$lawName" \
-        --query "primarySharedKey" -o tsv)
-    
-    caeId=$(az containerapp env create \
-        --name "$caeName" \
-        --resource-group "$rgName" \
-        --location "$region" \
-        --logs-destination log-analytics \
-        --logs-workspace-id "$lawCustomerId" \
-        --logs-workspace-key "$lawSharedKey" \
-        --infrastructure-subnet-resource-id "$subnetId" \
-        --internal-only true \
-        --query "id" -o tsv)
-    log_success "Created Container App Environment: ${caeName}"
-else
-    log_info "Container App Environment ${caeName} already exists"
-fi
-
-# Retrieve the static IP of the Container App Environment
-log_info "Retrieving Container App Environment static IP..."
-caeStaticIp=$(az containerapp env show \
-    --name "$caeName" \
-    --resource-group "$rgName" \
-    --query "properties.staticIp" -o tsv)
-log_info "Container App Environment static IP: ${caeStaticIp}"
-
-jq --arg tenant "$tenantName" --arg caeName "$caeName" --arg caeId "$caeId" --arg caeStaticIp "$caeStaticIp" \
-   '.tenants[$tenant] += {containerAppEnvName: $caeName, containerAppEnvId: $caeId, containerAppEnvStaticIp: $caeStaticIp}' \
+log_success "========================================================================="
+log_success "Tenant Resources Deployment Complete for '$TENANT_NAME'"
+log_success "========================================================================="
+log_info "Deployed Resources:"
+log_info "  • Managed Identity:         $UAMI_NAME"
+log_info "  • Container App Environment: $CAE_NAME"
+log_info "  • Static IP:                $CAE_STATIC_IP"  
+log_info "  • Default Domain:           $CAE_DEFAULT_DOMAIN"
+log_info "  • Private DNS Zone:         $PRIVATE_DNS_ZONE"
+log_info ""
+log_info "Next Steps:"
+log_info "  1. Configure Application Gateway routing:"
+log_info "     ./04-configure-routing.sh $TENANT_NAME dev"
+log_info "  2. Deploy Container Apps from app-gtwy-apps folder"
+log_info "========================================================================="
    "$output_file" > tmp.$$.json && mv tmp.$$.json "$output_file"
 # Update infra tracking file (ensure .resources.tenants exists)
 jq --arg tenant "$tenantName" --arg caeName "$caeName" --arg caeId "$caeId" --arg caeStaticIp "$caeStaticIp" \

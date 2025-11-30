@@ -50,14 +50,14 @@ fi
 log_info "Starting deployment for tenant: $TENANT_NAME, project: $PROJECT (Environment: $ENV)"
 
 log_info "Step 1: Deploying tenant resources..."
-"${SCRIPT_DIR}/03-deploy-tenant-resources.sh" "$TENANT_NAME" "$PROJECT" "$ENV"
+"${SCRIPT_DIR}/03-deploy-tenant-resources.sh" "$TENANT_NAME" "$ENV"
 if [ $? -ne 0 ]; then
   log_error "Failed to deploy resources for tenant '$TENANT_NAME'."
   exit 1
 fi
 
 log_info "Step 2: Configuring routing..."
-"${SCRIPT_DIR}/04-configure-routing.sh" "$TENANT_NAME" "$PROJECT" "$ENV"
+"${SCRIPT_DIR}/04-configure-routing.sh" "$TENANT_NAME" "$ENV"
 if [ $? -ne 0 ]; then
   log_error "Failed to configure routing for tenant '$TENANT_NAME'."
   exit 1

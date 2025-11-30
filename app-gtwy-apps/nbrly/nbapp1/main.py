@@ -6,6 +6,7 @@ Demonstrates:
 - Environment variable usage
 - Key Vault secret integration
 - Path-based routing with root_path="/app1"
+- Bloom tenant specific functionality
 """
 
 import os
@@ -13,7 +14,7 @@ import logging
 from datetime import datetime
 from typing import Dict, Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -30,17 +31,16 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", "dev")
 ROOT_PATH = os.getenv("ROOT_PATH", "/app1")
 APP_NAME = os.getenv("APP_NAME", "NBRLY-App1")
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
-DATABASE_URL = os.getenv("DATABASE_URL")  # From Key Vault
-SECRET_KEY = os.getenv("SECRET_KEY")  # From Key Vault
+DATABASE_URL = os.getenv("DATABASE_URL", None)  # From Key Vault
+SECRET_KEY = os.getenv("SECRET_KEY", None)  # From Key Vault
 
-# Initialize FastAPI app with path prefix for Application Gateway routing
+# Initialize FastAPI app
 app = FastAPI(
     title=f"{APP_NAME} API",
     description="NBRLY FastAPI application 1 for multi-tenant Azure Container Apps deployment",
     version="1.0.0",
-    root_path=ROOT_PATH,
     docs_url=f"{ROOT_PATH}/docs",
-    redoc_url=f"{ROOT_PATH}/redoc"
+    openapi_url=f"{ROOT_PATH}/openapi.json",
 )
 
 # CORS configuration
@@ -52,8 +52,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Create routers
+health_router = APIRouter()
+app_router = APIRouter()
 
-@app.get("/")
+@app_router.get("/")
 async def root() -> Dict[str, str]:
     """Root endpoint"""
     return {
@@ -62,12 +65,11 @@ async def root() -> Dict[str, str]:
         "environment": ENVIRONMENT,
         "tenant": "nbrly",
         "app": "nbapp1",
-        "root_path": ROOT_PATH,
         "status": "running"
     }
 
 
-@app.get("/health")
+@health_router.get("/health")
 async def health_check() -> Dict[str, Any]:
     """
     Health check endpoint for Application Gateway health probes
@@ -79,7 +81,6 @@ async def health_check() -> Dict[str, Any]:
         "environment": ENVIRONMENT,
         "tenant": "nbrly",
         "app": "nbapp1",
-        "root_path": ROOT_PATH,
         "checks": {
             "api": "ok",
             "secrets_loaded": "ok" if SECRET_KEY else "missing"
@@ -87,7 +88,7 @@ async def health_check() -> Dict[str, Any]:
     }
 
 
-@app.get("/health/ready")
+@health_router.get("/health/ready")
 async def readiness_check() -> Dict[str, Any]:
     """
     Readiness probe endpoint for Container Apps
@@ -118,7 +119,7 @@ async def readiness_check() -> Dict[str, Any]:
     }
 
 
-@app.get("/health/live")
+@health_router.get("/health/live")
 async def liveness_check() -> Dict[str, str]:
     """
     Liveness probe endpoint for Container Apps
@@ -132,7 +133,7 @@ async def liveness_check() -> Dict[str, str]:
     }
 
 
-@app.get("/api/info")
+@app_router.get("/api/info")
 async def get_info() -> Dict[str, Any]:
     """
     Get application configuration info (non-sensitive)
@@ -150,30 +151,62 @@ async def get_info() -> Dict[str, Any]:
     }
 
 
-@app.get("/api/nbrly/features")
-async def get_nbrly_features() -> Dict[str, Any]:
+@app_router.get("/api/nbrly/services")
+async def get_nbrly_services() -> Dict[str, Any]:
     """
-    Get NBRLY tenant specific features
+    Get NBRLY tenant specific services
     """
     return {
         "tenant": "nbrly",
         "app": "nbapp1",
-        "features": [
-            "user_management",
-            "data_analytics", 
-            "reporting_dashboard",
-            "api_integration"
+        "services": [
+            "content_management",
+            "media_processing",
+            "user_engagement",
+            "analytics_engine"
         ],
         "capabilities": {
-            "max_users": 1000,
-            "storage_limit_gb": 100,
-            "api_calls_per_day": 50000
+            "max_content_items": 10000,
+            "storage_limit_gb": 500,
+            "concurrent_users": 2000,
+            "api_calls_per_day": 100000
+        },
+        "features": {
+            "real_time_processing": True,
+            "ai_content_analysis": True,
+            "advanced_analytics": True,
+            "custom_integrations": True
         },
         "timestamp": datetime.utcnow().isoformat()
     }
 
 
-@app.get("/api/database/test")
+@app_router.get("/api/nbrly/content")
+async def get_nbrly_content() -> Dict[str, Any]:
+    """
+    Get NBRLY tenant content management info
+    """
+    return {
+        "tenant": "nbrly",
+        "app": "nbapp1",
+        "content_stats": {
+            "total_items": 1500,
+            "published": 1200,
+            "draft": 250,
+            "archived": 50,
+            "categories": ["articles", "videos", "images", "documents"]
+        },
+        "media_processing": {
+            "image_formats_supported": ["JPG", "PNG", "GIF", "WebP"],
+            "video_formats_supported": ["MP4", "AVI", "MOV", "WebM"],
+            "max_file_size_mb": 100,
+            "processing_queue": 5
+        },
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app_router.get("/api/database/test")
 async def test_database() -> Dict[str, Any]:
     """
     Test database connectivity
@@ -220,6 +253,11 @@ async def global_exception_handler(request, exc):
             "message": str(exc) if ENVIRONMENT == "dev" else "An error occurred"
         }
     )
+
+# Mount routers
+# App logic and Health checks must be under ROOT_PATH
+app.include_router(app_router, prefix=ROOT_PATH)
+app.include_router(health_router, prefix=ROOT_PATH)
 
 
 if __name__ == "__main__":

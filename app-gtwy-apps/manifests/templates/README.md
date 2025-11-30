@@ -67,7 +67,7 @@ Template for Container Apps with PostgreSQL database connections.
 ### Automatic Generation
 Manifests are automatically generated from templates when running:
 ```bash
-./scripts/deploy-yaml.sh
+./scripts/07-deploy-yaml.sh
 ```
 
 The deployment script:
@@ -86,11 +86,11 @@ To generate manifests without deploying:
 This will:
 - Read configuration from `config/parameters-dev.json` and tenant-specific configs
 - Process all templates
-- Generate manifests in:
-  - `manifests/nbrly/nbapp1-containerapp.yaml`
-  - `manifests/nbrly/nbapp2-containerapp.yaml`
-  - `manifests/bloom/bmapp1-containerapp.yaml`
-  - `manifests/bloom/bmapp2-containerapp.yaml`
+- Generate manifests in `manifests/.generated/`:
+  - `nbrly-nbapp1.yaml`
+  - `nbrly-nbapp2.yaml`
+  - `bloom-bmapp1.yaml`
+  - `bloom-bmapp2.yaml`
 
 ## Adding New Templates
 
@@ -162,7 +162,7 @@ If generated manifests contain unreplaced placeholders:
 ### UAMI Client ID Issues
 The `#{*_UAMI_CLIENT_ID}#` placeholders are replaced at deployment time:
 1. `generate-manifests.sh` leaves them as placeholders
-2. `deploy-yaml.sh` fetches actual client IDs from Azure
+2. `07-deploy-yaml.sh` fetches actual client IDs from Azure
 3. Client IDs are replaced just before deployment
 
 ### Template Validation
@@ -178,6 +178,6 @@ cat config/parameters-dev.json | jq -r 'keys[]'
 ## See Also
 
 - [Manifest Generation Script](../../scripts/helpers/generate-manifests.sh)
-- [Deployment Script](../../scripts/deploy-yaml.sh)
+- [Deployment Script](../../scripts/07-deploy-yaml.sh)
 - [Configuration System](../config/README.md)
 - [Azure Integration Guide](../docs/azure-resources-integration.md)

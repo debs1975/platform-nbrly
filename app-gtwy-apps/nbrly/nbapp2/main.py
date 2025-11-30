@@ -1,20 +1,20 @@
 """
-NBRLY Sample FastAPI Application 2 for Azure Container Apps with Application Gateway
+NBRLY Sample FastAPI Application 1 for Azure Container Apps with Application Gateway
 Demonstrates:
 - Health check endpoints
 - Database connectivity
 - Environment variable usage
 - Key Vault secret integration
 - Path-based routing with root_path="/app2"
-- Task management functionality
+- Bloom tenant specific functionality
 """
 
 import os
 import logging
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -31,17 +31,16 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", "dev")
 ROOT_PATH = os.getenv("ROOT_PATH", "/app2")
 APP_NAME = os.getenv("APP_NAME", "NBRLY-App2")
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
-DATABASE_URL = os.getenv("DATABASE_URL")  # From Key Vault
-SECRET_KEY = os.getenv("SECRET_KEY")  # From Key Vault
+DATABASE_URL = os.getenv("DATABASE_URL", None)  # From Key Vault
+SECRET_KEY = os.getenv("SECRET_KEY", None)  # From Key Vault
 
-# Initialize FastAPI app with path prefix for Application Gateway routing
+# Initialize FastAPI app
 app = FastAPI(
     title=f"{APP_NAME} API",
-    description="NBRLY FastAPI application 2 for multi-tenant Azure Container Apps deployment",
-    version="2.0.0",
-    root_path=ROOT_PATH,
+    description="NBRLY FastAPI application 1 for multi-tenant Azure Container Apps deployment",
+    version="1.0.0",
     docs_url=f"{ROOT_PATH}/docs",
-    redoc_url=f"{ROOT_PATH}/redoc"
+    openapi_url=f"{ROOT_PATH}/openapi.json",
 )
 
 # CORS configuration
@@ -53,27 +52,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory data store for demo
-tasks: List[Dict[str, Any]] = []
-task_id_counter = 1
+# Create routers
+health_router = APIRouter()
+app_router = APIRouter()
 
-
-@app.get("/")
+@app_router.get("/")
 async def root() -> Dict[str, str]:
     """Root endpoint"""
     return {
         "service": APP_NAME,
-        "version": "2.0.0",
+        "version": "1.0.0",
         "environment": ENVIRONMENT,
         "tenant": "nbrly",
         "app": "nbapp2",
-        "root_path": ROOT_PATH,
-        "status": "running",
-        "features": ["task_management", "health_checks", "api_info"]
+        "status": "running"
     }
 
 
-@app.get("/health")
+@health_router.get("/health")
 async def health_check() -> Dict[str, Any]:
     """
     Health check endpoint for Application Gateway health probes
@@ -85,17 +81,14 @@ async def health_check() -> Dict[str, Any]:
         "environment": ENVIRONMENT,
         "tenant": "nbrly",
         "app": "nbapp2",
-        "root_path": ROOT_PATH,
-        "version": "2.0.0",
         "checks": {
             "api": "ok",
-            "secrets_loaded": "ok" if SECRET_KEY else "missing",
-            "tasks_store": "ok"
+            "secrets_loaded": "ok" if SECRET_KEY else "missing"
         }
     }
 
 
-@app.get("/health/ready")
+@health_router.get("/health/ready")
 async def readiness_check() -> Dict[str, Any]:
     """
     Readiness probe endpoint for Container Apps
@@ -103,8 +96,7 @@ async def readiness_check() -> Dict[str, Any]:
     """
     checks = {
         "environment_vars": "ok",
-        "secrets": "ok" if SECRET_KEY else "fail",
-        "tasks_store": "ok"
+        "secrets": "ok" if SECRET_KEY else "fail"
     }
     
     # Check database connectivity (basic check)
@@ -123,12 +115,11 @@ async def readiness_check() -> Dict[str, Any]:
         "timestamp": datetime.utcnow().isoformat(),
         "tenant": "nbrly",
         "app": "nbapp2",
-        "version": "2.0.0",
         "checks": checks
     }
 
 
-@app.get("/health/live")
+@health_router.get("/health/live")
 async def liveness_check() -> Dict[str, str]:
     """
     Liveness probe endpoint for Container Apps
@@ -138,12 +129,11 @@ async def liveness_check() -> Dict[str, str]:
         "status": "alive",
         "timestamp": datetime.utcnow().isoformat(),
         "tenant": "nbrly",
-        "app": "nbapp2",
-        "version": "2.0.0"
+        "app": "nbapp2"
     }
 
 
-@app.get("/api/info")
+@app_router.get("/api/info")
 async def get_info() -> Dict[str, Any]:
     """
     Get application configuration info (non-sensitive)
@@ -152,144 +142,102 @@ async def get_info() -> Dict[str, Any]:
         "service": APP_NAME,
         "tenant": "nbrly",
         "app": "nbapp2",
-        "version": "2.0.0",
         "environment": ENVIRONMENT,
         "root_path": ROOT_PATH,
         "allowed_origins": ALLOWED_ORIGINS,
         "database_configured": bool(DATABASE_URL),
         "secrets_configured": bool(SECRET_KEY),
-        "tasks_count": len(tasks),
         "timestamp": datetime.utcnow().isoformat()
     }
 
 
-@app.get("/api/tasks")
-async def get_tasks() -> Dict[str, Any]:
+@app_router.get("/api/nbrly/services")
+async def get_nbrly_services() -> Dict[str, Any]:
     """
-    Get all tasks for NBRLY tenant
+    Get NBRLY tenant specific services
     """
     return {
         "tenant": "nbrly",
         "app": "nbapp2",
-        "tasks": tasks,
-        "count": len(tasks),
-        "timestamp": datetime.utcnow().isoformat()
-    }
-
-
-@app.post("/api/tasks")
-async def create_task(title: str, description: str = "") -> Dict[str, Any]:
-    """
-    Create a new task for NBRLY tenant
-    """
-    global task_id_counter
-    
-    task = {
-        "id": task_id_counter,
-        "title": title,
-        "description": description,
-        "status": "pending",
-        "tenant": "nbrly",
-        "created_at": datetime.utcnow().isoformat(),
-        "updated_at": datetime.utcnow().isoformat()
-    }
-    
-    tasks.append(task)
-    task_id_counter += 1
-    
-    logger.info(f"Created task for nbrly tenant: {task['id']}")
-    
-    return {
-        "message": "Task created for nbrly tenant",
-        "task": task
-    }
-
-
-@app.get("/api/tasks/{task_id}")
-async def get_task(task_id: int) -> Dict[str, Any]:
-    """
-    Get a specific task by ID for NBRLY tenant
-    """
-    task = next((t for t in tasks if t["id"] == task_id), None)
-    
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found in nbrly tenant")
-    
-    return task
-
-
-@app.put("/api/tasks/{task_id}")
-async def update_task(task_id: int, status: str) -> Dict[str, Any]:
-    """
-    Update task status for NBRLY tenant
-    """
-    task = next((t for t in tasks if t["id"] == task_id), None)
-    
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found in nbrly tenant")
-    
-    valid_statuses = ["pending", "in_progress", "completed", "cancelled"]
-    if status not in valid_statuses:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
-        )
-    
-    task["status"] = status
-    task["updated_at"] = datetime.utcnow().isoformat()
-    
-    logger.info(f"Updated nbrly task {task_id} to status: {status}")
-    
-    return {
-        "message": "Task updated for nbrly tenant",
-        "task": task
-    }
-
-
-@app.delete("/api/tasks/{task_id}")
-async def delete_task(task_id: int) -> Dict[str, str]:
-    """
-    Delete a task for NBRLY tenant
-    """
-    global tasks
-    
-    task = next((t for t in tasks if t["id"] == task_id), None)
-    
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found in nbrly tenant")
-    
-    tasks = [t for t in tasks if t["id"] != task_id]
-    
-    logger.info(f"Deleted nbrly task: {task_id}")
-    
-    return {
-        "message": "Task deleted from nbrly tenant",
-        "tenant": "nbrly",
-        "task_id": str(task_id)
-    }
-
-
-@app.get("/api/nbrly/analytics")
-async def get_nbrly_analytics() -> Dict[str, Any]:
-    """
-    Get NBRLY tenant specific analytics
-    """
-    completed_tasks = [t for t in tasks if t["status"] == "completed"]
-    pending_tasks = [t for t in tasks if t["status"] == "pending"]
-    in_progress_tasks = [t for t in tasks if t["status"] == "in_progress"]
-    
-    return {
-        "tenant": "nbrly",
-        "app": "nbapp2",
-        "analytics": {
-            "total_tasks": len(tasks),
-            "completed_tasks": len(completed_tasks),
-            "pending_tasks": len(pending_tasks),
-            "in_progress_tasks": len(in_progress_tasks),
-            "completion_rate": len(completed_tasks) / len(tasks) * 100 if tasks else 0
+        "services": [
+            "content_management",
+            "media_processing",
+            "user_engagement",
+            "analytics_engine"
+        ],
+        "capabilities": {
+            "max_content_items": 10000,
+            "storage_limit_gb": 500,
+            "concurrent_users": 2000,
+            "api_calls_per_day": 100000
+        },
+        "features": {
+            "real_time_processing": True,
+            "ai_content_analysis": True,
+            "advanced_analytics": True,
+            "custom_integrations": True
         },
         "timestamp": datetime.utcnow().isoformat()
     }
+
+
+@app_router.get("/api/nbrly/content")
+async def get_nbrly_content() -> Dict[str, Any]:
+    """
+    Get NBRLY tenant content management info
+    """
+    return {
+        "tenant": "nbrly",
+        "app": "nbapp2",
+        "content_stats": {
+            "total_items": 1500,
+            "published": 1200,
+            "draft": 250,
+            "archived": 50,
+            "categories": ["articles", "videos", "images", "documents"]
+        },
+        "media_processing": {
+            "image_formats_supported": ["JPG", "PNG", "GIF", "WebP"],
+            "video_formats_supported": ["MP4", "AVI", "MOV", "WebM"],
+            "max_file_size_mb": 100,
+            "processing_queue": 5
+        },
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app_router.get("/api/database/test")
+async def test_database() -> Dict[str, Any]:
+    """
+    Test database connectivity
+    """
+    if not DATABASE_URL:
+        raise HTTPException(
+            status_code=503,
+            detail="Database connection string not configured"
+        )
+    
+    try:
+        # Placeholder for actual database connection test
+        # In production, you would:
+        # 1. Import psycopg2 or asyncpg
+        # 2. Create a connection
+        # 3. Execute a simple query (SELECT 1)
+        # 4. Close the connection
+        
+        return {
+            "status": "database_url_configured",
+            "message": "Database URL is configured for nbrly tenant",
+            "tenant": "nbrly",
+            "app": "nbapp2",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Database test failed: {str(e)}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Database connection test failed: {str(e)}"
+        )
 
 
 @app.exception_handler(Exception)
@@ -305,6 +253,11 @@ async def global_exception_handler(request, exc):
             "message": str(exc) if ENVIRONMENT == "dev" else "An error occurred"
         }
     )
+
+# Mount routers
+# App logic and Health checks must be under ROOT_PATH
+app.include_router(app_router, prefix=ROOT_PATH)
+app.include_router(health_router, prefix=ROOT_PATH)
 
 
 if __name__ == "__main__":

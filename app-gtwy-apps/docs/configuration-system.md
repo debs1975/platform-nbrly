@@ -188,10 +188,10 @@ The following scripts have been updated to use the configuration system:
 ### Deployment Scripts
 - `scripts/deploy-nbrly.sh` - Reads all deployment parameters from config
 - `scripts/deploy-bloom.sh` - Reads all deployment parameters from config
-- `scripts/deploy-all.sh` - Uses tenant configurations
+- `scripts/04-deploy-all.sh` - Uses tenant configurations
 
 ### Routing Scripts
-- `scripts/configure-routing.sh` - Reads Application Gateway and domain config
+- `scripts/08-configure-routing.sh` - Reads Application Gateway and domain config
 - `scripts/routing/configure-routing-nbrly.sh` - Uses NBRLY tenant config
 - `scripts/routing/configure-routing-bloom.sh` - Uses BLOOM tenant config
 

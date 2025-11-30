@@ -168,6 +168,36 @@ finalize_logging() {
  fi
 }
 #------------------------------------------------------------------------------
+# Simple logging functions (for scripts that don't use setup_logging)
+#------------------------------------------------------------------------------
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Simple log function
+log() {
+    echo -e "${BLUE}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"
+}
+
+# Simple error function
+error() {
+    echo -e "${RED}[ERROR] $1${NC}" >&2
+}
+
+# Simple success function
+success() {
+    echo -e "${GREEN}[SUCCESS] $1${NC}"
+}
+
+# Simple warning function
+warning() {
+    echo -e "${YELLOW}[WARNING] $1${NC}"
+}
+
+#------------------------------------------------------------------------------
 # Export functions
 #------------------------------------------------------------------------------
 export -f setup_logging
@@ -179,3 +209,7 @@ export -f log_error
 export -f log_command
 export -f log_auth_details
 export -f finalize_logging
+export -f log
+export -f error
+export -f success
+export -f warning
