@@ -6,21 +6,27 @@
 # Builds and pushes both NBRLY and BLOOM tenant applications to Azure Container Registry
 #
 # USAGE:
-#   ./01-build-push-all.sh [TAG]
+#   ./01-build-push-all.sh [ENV] [TAG]
 #
 # PARAMETERS:
+#   ENV    (Optional) Environment name. Default: 'dev'
+#          Used to locate config file: config/infra-${ENV}.json
+#          Examples: dev, stage, prod
 #   TAG    (Optional) Docker image tag to use. Default: 'latest'
 #          Examples: v1.0.0, dev-20251122, latest
 #
 # EXAMPLES:
-#   ./01-build-push-all.sh                # Build with 'latest' tag
-#   ./01-build-push-all.sh v1.0.0         # Build with version tag
-#   ./01-build-push-all.sh dev-$(date +%Y%m%d)  # Build with date tag
+#   ./01-build-push-all.sh                    # Uses dev env, latest tag
+#   ./01-build-push-all.sh dev                # Uses dev env, latest tag
+#   ./01-build-push-all.sh dev v1.0.0         # Uses dev env, v1.0.0 tag
+#   ./01-build-push-all.sh stage v2.0.0       # Uses stage env, v2.0.0 tag
+#   ./01-build-push-all.sh prod latest        # Uses prod env, latest tag
 #
 # PREREQUISITES:
 #   - Azure CLI logged in (az login)
 #   - Docker running
 #   - ACR access (AcrPush role)
+#   - Valid config file at: config/infra-${ENV}.json
 #
 # BUILDS:
 #   - nbrly-nbapp1:TAG
@@ -36,9 +42,9 @@
 #             Applied to all built images
 #
 # EXAMPLES:
-#   ./build-push-all.sh                    # Uses dev env, latest tag
-#   ./build-push-all.sh dev v1.0.0         # Uses dev env, v1.0.0 tag
-#   ./build-push-all.sh prod v2.0.0        # Uses prod env, v2.0.0 tag
+#   ./01-build-push-all.sh                    # Uses dev env, latest tag
+#   ./01-build-push-all.sh dev v1.0.0         # Uses dev env, v1.0.0 tag
+#   ./01-build-push-all.sh stage v2.0.0       # Uses stage env, v2.0.0 tag
 #
 # PREREQUISITES:
 #   - Azure CLI installed and authenticated (az login)
@@ -72,7 +78,9 @@ TAG=${2:-"latest"}
 INFRA_CONFIG="$(dirname "$0")/../config/infra-${ENV}.json"
 
 if [ ! -f "$INFRA_CONFIG" ]; then
-    echo "Infra config not found: $INFRA_CONFIG" >&2
+    echo "ERROR: Infra config not found: $INFRA_CONFIG" >&2
+    echo "Please ensure the configuration file exists for environment: $ENV" >&2
+    echo "Expected location: config/infra-${ENV}.json" >&2
     exit 1
 fi
 
@@ -184,10 +192,22 @@ main() {
     echo "================================================================================"
     log "BUILD AND PUSH ALL APPLICATIONS"
     echo "================================================================================"
+    log "Script: 01-build-push-all.sh"
     log "Purpose: Build and push all NBRLY and BLOOM tenant container images to ACR"
-    log "ACR Registry: $ACR_REGISTRY"
-    log "Environment: $ENV"
-    log "Tag: $TAG"
+    echo "-------------------------------------------------------------------------------"
+    log "Parameters:"
+    log "  Environment:      $ENV"
+    log "  Image Tag:        $TAG"
+    echo "-------------------------------------------------------------------------------"
+    log "Azure Resources:"
+    log "  ACR Registry:     $ACR_REGISTRY"
+    log "  Resource Group:   $RESOURCE_GROUP"
+    echo "-------------------------------------------------------------------------------"
+    log "Applications to Build:"
+    log "  - nbrly-nbapp1:$TAG"
+    log "  - nbrly-nbapp2:$TAG"
+    log "  - bloom-bmapp1:$TAG"
+    log "  - bloom-bmapp2:$TAG"
     echo "================================================================================"
     echo
     
@@ -238,7 +258,14 @@ main() {
         
         exit 0
     else
-        error "Some applications failed to build/push"
+        error "Failed to build and push some applications"
+        error "Successful: $success_count/$total_count"
+        error "Please check the error messages above for details"
+        error "Common issues:"
+        error "  - Docker daemon not running"
+        error "  - Insufficient ACR permissions"
+        error "  - Network connectivity issues"
+        error "  - Invalid Dockerfile or build context"
         exit 1
     fi
 }

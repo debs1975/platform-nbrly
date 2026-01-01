@@ -25,32 +25,77 @@
         - for listener nbrly-dev.astrapia.io → backend pool pointing to nbrly-dev-cae.grayfield-aa4022a1.eastus.azurecontainerapps.io → private DNS zone(grayfield-aa4022a1.eastus.azurecontainerapps.io) resolves to route of the container app environment nbrly-dev-cae as nbrly-dev-cae.grayfield-aa4022a1.eastus.azurecontainerapps.io  → container app hosting nbapp1 i.e. ca-nbrly-nbapp1-dev or container app hosting nbapp2 i.e. ca-nbrly-nbapp2-dev ( this should be done at the route of the container app env.)
       
 **Sequence and structure of the scripts should be as below:**
-   
-    1. in the folder iac-cli create/update the scripts to create the base infrastructure including VNET and Subnet,application gateway, key vault, container registry
-    2. after step 1, 
-        - create the separate script to onboard each tenant container app environment ( and not container app) with required private DNS zone and record sets, backend pools, http settings, listeners, routing rules in the application gateway. 
-        - The container app environment onboarding script should be parameterized to take tenantName as input parameter to create the respective container app environment along with private DNS zone and record sets, backend pools, http settings, listeners, routing rules in the application gateway. 
-        - The container app environment is internal amd is associated with the respective subnet created in step 1.
-    3. in the folder app-gtwy-apps create the scripts to 
-        - There are already 2 python apps(fast api) as nbapp1 and nbapp2 in the folder app-gtway-apps/nbrly.
-        - root url for nbapp1 and nbapp2 in the fastapi code should be /app1 and /app2 respectively
-        - There are already 2 python apps(fast api) as bmapp1 and bmapp2 in the folder app-gtway-apps/bloom.
-        - root url for bmapp1 and bmapp2 in the fastapi code should be /app1 and /app2 respectively
-        - create the scripts to 
-            - docker build and push to acr for nbapp1 and nbapp2. These already exists, hence no need to create again. 
-            - docker build and push to acr for bmapp1 and bmapp2. These already exists, hence no need to create again.
-            - nbapp1 and nbapp2 to be deployed in container app env(tenantName): nbrly and hence the container app env name is nbrly-dev-cae.
-            - bmapp1 and bmapp2 to be deployed in container app env(tenantName): bloom and hence the container app env name is bloom-dev-cae.
-            - the container apps ingress traffic should be configured as Limited to Vnet
-            - create the scripts to configure application gateway for path based routing as below:
-                - for tenant nbrly
-                    - URL path based routing for /app1 to nbapp1 container app
-                    - URL path based routing for /app2 to nbapp2 container app
-                - for tenant bloom
-                    - URL path based routing for /app1 to bmapp1 container app
-                    - URL path based routing for /app2 to bmapp2 container app
-                - Generate relavant <container-app-env>-routes.yaml files and names of the routes as <container-app-env>.<domain of the container app environment> for container apps deployment as per the above requirement. for example: bloom-dev-cae-routes.yaml and nbrly-dev-cae-routes.yaml, route name as bloom-dev-cae and nbrly-dev-cae respectively.
-
+    - iac-cli is the folder under which iac-cli/scripts is used to create base infrastructure and tenant onboarding
+    - app-gtwy-apps is the folder under which container app deployment scripts will be created
+    - Scripts under iac-cli/scripts folder should be structured as below:
+        1. Create the base infrastructure creation scripts as below:
+            - create or update respective parameter files under iac-cli/config folder as per the naming convention mentioned in iac-naming-convention.instructions.md. for example parameters-dev.json for dev environment .
+            - create or update respective infra-dev.json under iac-cli/config folder to keep the resource details created as part of infrastructure creation scripts in iac-cli which needs to be referred in the tenant onboarding scripts and app-gtwy-apps scripts later
+            - Generate the required parameters in the parameters files as per the naming convention mentioned in iac-naming-convention.instructions.md
+            - create the infrastructure creation script to take environment as input parameter to create the required base infrastructure.
+            - The required parameters should be fetched from iac-cli/config/parameters-{ENV}.json using helper function get_infra_value in the scripts
+            - create resource group if does not exist
+            - create vnet with required address space 
+            - create subnet for private endpoints (subnet CIDR should have 32 IPs for private endpoints)
+            - create subnet for postgresql server ( subnet CIDR should have 32 IPs for postgresql server)
+            - create subnet for Bastion host ( subnet CIDR should have 32 IPs for bastion host)
+            - create subnet for vmss ( subnet CIDR should have 64 IPs for vmss instances)
+            - create subnets for application gateway (subnet CIDR should have enough IPs for application gateway instances) 
+            - create container registry and key vault
+            - upload the ssl certificate (*.astrapria.io) from iac-cli/cred to key vault
+            - create managed identities required for application gateway
+            - assign required role assignments to the managed identities created for application gateway to access key vault
+            - create application gateway with required public IP, key vault, ssl cert from key vault, frontend IP config, backend pools( empty at this stage), http settings( empty at this stage), listeners( empty at this stage), routing rules( empty at this stage)    
+            - create private link for application gateway to the vnet created
+           
+            
+        2. Create separate scripts for tenant onboarding under iac-cli/scripts/tenant folder as below:
+            - create or update respective parameter files under iac-cli/config folder as per the naming convention mentioned in iac-naming-convention.instructions.md. for example parameters-dev.json for dev environment .
+            - create or update respective infra-dev.json under iac-cli/config folder to keep the resource details created as part of infrastructure creation scripts in iac-cli which needs to be referred in the tenant onboarding scripts and app-gtwy-apps scripts later
+            - Generate the required parameters in the parameters files as per the naming convention mentioned in iac-naming-convention.instructions.md
+            - create the infrastructure creation script to take environment as input parameter to create the required base infrastructure.
+            - The required parameters should be fetched from iac-cli/config/parameters-{ENV}.json using helper function get_infra_value in the scripts
+            - create the tenant onboarding script to take tenantName as input parameter to create the respective tenant subnet, container app environment and required private DNS zone and record sets, backend pools, http settings, listeners, routing rules in the application gateway.
+            - create the subnet for the tenant container app environment with required address space (subnet CIDR should have 200+ IPs for container app environment)
+            - create the user managed identity for the tenant container app environment to access key vault and container registry
+            - create the tenant container app environment in the respective subnet created. The container app environment should be internal.
+            - create the private DNS zone for the tenant container app environment
+            - create the private DNS zone link to link the private DNS zone to the vnet created in step 1
+            - create the required record sets in the private DNS zone to point to the route of the container app environment created in this step
+               - for example if the tenantName is bloom, the private DNS zone created should be graycliff-28ad9dd7.eastus.azurecontainerapps.io and the record set created in this private DNS zone should be * pointing to the route of the container app environment bloom-dev-cae such as bloom-dev-cae.graycliff-28ad9dd7.eastus.azurecontainerapps.io
+            - create the backend pools in the application gateway to point to the route of the container app environment created in this step. For example if the tenantName is bloom, the backend pool created should be bloom-bp pointing to bloom-dev-cae.graycliff-28ad9dd7.eastus.azurecontainerapps.io
+            - create the http settings in the application gateway for the tenant container app environment created in this step. For example if the tenantName is bloom, the http settings created should be bloom-http-settings with required port, protocol, health probe configuration etc.
+            - create the listener in the application gateway for the tenant container app environment created in this step
+               - for example for the tenantName bloom and environment dev, the listener created should be bloom-dev.astrapia.io
+            - create the basic routing rules in the application gateway for the tenant container app environment created in this step
+               - for example for the tenantName bloom and environment dev, the routing rule created should be bloom-rl with required backend pool as bloom-bp, http settings as bloom-http-settings, listener as bloom-dev.astrapia.io etc.
+            
+    - For app-gtwy-apps: 
+        - create or update respective parameter files under app-gtwy-apps/config folder as per the naming convention mentioned in iac-naming-convention.instructions.md. for example parameters-dev.json for dev environment .
+        - create or update respective infra-dev.json under app-gtwy-apps/config folder to keep the resource details created as part of infrastructure creation scripts in app-gtwy-apps 
+        - Generate the required parameters in the parameters files as per the naming convention mentioned in iac-naming-convention.instructions.md
+        - Copy over any parameters required for container app environment creation from iac-cli/config/infra-dev.json and iac-cli/config/parameters-dev.json to app-gtwy-apps/config/infra-dev.json and app-gtwy-apps/config/parameters-dev.json respectively.
+        - Create the apps
+            1. Create python fast api apps under apps folder as below (script not required, just the steps):
+                - create python fast api app as per the app name input parameter with root path as /app1. For example if app name is bmapp1, the root path should be /app1
+                - create python fast api app for the app name bmapp1 and nbapp1 with health endpoint at /app1/health 
+                - create the dockerfile for each the apps to containerize the apps
+            2. Docker build and push to ACR
+                - create the script to take environment, app name and tag as input parameter to docker build and push the respective app to the container registry created as part of infrastructure creation in iac-cli
+        - create the scripts to deploy the container apps in respective container app environment as below:
+            1. create the script to take environment and app name as input parameter to create the required resources
+                - bmapp1 needs to be deployed in container app env(tenantName): bloom and hence the container app env name is bloom-dev-cae.
+                - nbapp1 needs to be deployed in container app env(tenantName): nbrly and hence the container app env name is nbrly-dev-cae
+                - the container apps ingress traffic should be configured as Limited to Vnet
+                - create the scripts create routing rule conatiner app environment for path based routing as below:
+                        - for tenant nbrly, URL path based routing for /app1 to nbapp1 container app
+                        - for tenant bloom, URL path based routing for /app1 to bmapp1 container app  
+                        - Generate relavant <container-app-env>-routes.yaml files under app-gtwy-apps/manifests/routing folder for the above path based routing configuration
+                            - for example bloom-dev-cae-routes.yaml for tenant bloom and nbrly-dev-cae-routes.yaml for tenant nbrly
+                        - the name of the route needs to be <container-app-env>, for example bloom-dev-cae for tenant bloom and nbrly-dev-cae for tenant nbrly
+                - create the scripts to deploy the container app environment routing configuration as below:
+                    - the script should take environment and tenantName as input parameter to deploy the respective container app environment routing configuration using the respective <container-app-env>-routes.yaml file created in the previous step
+                    
 **Config files and Parameters file:**
     - follow the naming convention as mentioned in iac-naming-convention.instructions.md
     - create config folder under iac-cli and app-gtwy-apps 

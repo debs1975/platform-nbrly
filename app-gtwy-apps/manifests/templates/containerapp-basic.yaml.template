@@ -9,10 +9,17 @@ properties:
       - server: #{ACR_REGISTRY}#
         identity: /subscriptions/#{SUBSCRIPTION_ID}#/resourceGroups/#{RESOURCE_GROUP}#/providers/Microsoft.ManagedIdentity/userAssignedIdentities/#{UAMI_NAME}#
     ingress:
-      external: false
+      external: true
       targetPort: 8000
       transport: http
       allowInsecure: false
+    secrets:
+      - name: sample-api-key
+        keyVaultUrl: https://#{KEY_VAULT_NAME}#.vault.azure.net/secrets/#{TENANT}#-api-key
+        identity: /subscriptions/#{SUBSCRIPTION_ID}#/resourceGroups/#{RESOURCE_GROUP}#/providers/Microsoft.ManagedIdentity/userAssignedIdentities/#{UAMI_NAME}#
+      - name: db-connection-string
+        keyVaultUrl: https://#{KEY_VAULT_NAME}#.vault.azure.net/secrets/#{TENANT}#-psql-connection-string
+        identity: /subscriptions/#{SUBSCRIPTION_ID}#/resourceGroups/#{RESOURCE_GROUP}#/providers/Microsoft.ManagedIdentity/userAssignedIdentities/#{UAMI_NAME}#
   template:
     containers:
       - name: #{CONTAINER_NAME}#
@@ -32,22 +39,14 @@ properties:
             value: "#{UAMI_CLIENT_ID}#"
           - name: PORT
             value: "8000"
+          - name: SAMPLE_API_KEY
+            secretRef: sample-api-key
+          - name: DATABASE_URL
+            secretRef: db-connection-string
         resources:
           cpu: #{CPU}#
           memory: #{MEMORY}#
-        probes:
-          - type: Liveness
-            httpGet:
-              path: /health/live
-              port: 8000
-            initialDelaySeconds: 30
-            periodSeconds: 10
-          - type: Readiness
-            httpGet:
-              path: /health/ready
-              port: 8000
-            initialDelaySeconds: 5
-            periodSeconds: 5
+        probes: []
     scale:
       minReplicas: #{MIN_REPLICAS}#
       maxReplicas: #{MAX_REPLICAS}#

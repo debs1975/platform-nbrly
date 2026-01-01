@@ -1,0 +1,28 @@
+# Container Apps Environment HTTP Routing Configuration for NBRLY
+# Tenant: nbrly
+# Domain: nbrly-dev.astrapia.io
+# Docs: https://learn.microsoft.com/en-us/azure/container-apps/rule-based-routing-custom-domain
+rules:
+  # Rule for nbapp1: Route /app1 and /app1/* to nbapp1 container app
+  - description: "NBRLY App1 routing rule"
+    routes:
+      - match:
+          prefix: /app1
+    targets:
+      - containerApp: "ca-nbrly-nbapp1-dev"
+  
+  # Rule for nbapp2: Route /app2 and /app2/* to nbapp2 container app
+  - description: "NBRLY App2 routing rule"
+    routes:
+      - match:
+          prefix: /app2
+    targets:
+      - containerApp: "ca-nbrly-nbapp2-dev"
+
+# Placeholder Variables (replaced by configure-routing.sh):
+#   nbrly-dev.astrapia.io    - nbrly-dev.astrapia.io
+#   /subscriptions/984059e7-2907-4273-8569-703dddc5adfa/resourceGroups/astra-dev-eastus-rg/providers/Microsoft.App/managedEnvironments/nbrly-dev-cae/certificates/nbrly-dev-cae-astra-dev-east-cert-1284  - Container App Environment certificate resource ID
+#
+# Container Apps:
+#   - ca-nbrly-nbapp1-dev (nbapp1)
+#   - ca-nbrly-nbapp2-dev (nbapp2)

@@ -83,7 +83,9 @@ get_infra_value() {
         if [ -n "$default_value" ]; then
             echo "$default_value"
         else
-            echo -e "${YELLOW}Warning: Value not found for path: ${json_path}${NC}" >&2
+            echo -e "${RED}Error: Required value not found for path: ${json_path}${NC}" >&2
+            echo -e "${RED}Config file: $config_file${NC}" >&2
+            echo -e "${RED}This is a fatal configuration error. Please check your configuration files.${NC}" >&2
             return 1
         fi
     else
@@ -145,13 +147,13 @@ export_infra_config() {
     local config_file
     config_file=$(load_infra_config "$env") || return 1
     export CONFIG_ENV=$(jq -r '.environment' "$config_file")
-    export CONFIG_PROJECT=$(jq -r '.project' "$config_file")
-    export CONFIG_RESOURCE_GROUP=$(jq -r '.resources.resourceGroup.name' "$config_file")
-    export CONFIG_CONTAINER_REGISTRY=$(jq -r '.resources.containerRegistry.name' "$config_file")
-    export CONFIG_VNET_NAME=$(jq -r '.resources.vnet.name' "$config_file")
-    export CONFIG_AGW_NAME=$(jq -r '.resources.applicationGateway.name' "$config_file")
-    export CONFIG_LOG_WORKSPACE=$(jq -r '.resources.logAnalytics.name' "$config_file")
-    export CONFIG_KEYVAULT_NAME=$(jq -r '.resources.keyVault.name' "$config_file")
+    export CONFIG_PROJECT=$(jq -r '.project // "astra"' "$config_file")
+    export CONFIG_RESOURCE_GROUP=$(jq -r '.resourceGroup.name' "$config_file")
+    export CONFIG_CONTAINER_REGISTRY=$(jq -r '.containerRegistry.name' "$config_file")
+    export CONFIG_VNET_NAME=$(jq -r '.networking.virtualNetwork.name' "$config_file")
+    export CONFIG_AGW_NAME=$(jq -r '.applicationGateway.name' "$config_file")
+    export CONFIG_LOG_WORKSPACE=$(jq -r '.logAnalytics.name // ""' "$config_file")
+    export CONFIG_KEYVAULT_NAME=$(jq -r '.keyVault.name' "$config_file")
     echo -e "${GREEN}Infra configuration exported for environment: ${env}${NC}"
 }
 
@@ -252,11 +254,11 @@ print_config_summary() {
     echo
     echo "Infra Configuration:"
     echo "  Environment: $(jq -r '.environment' "$infra_config")"
-    echo "  Project: $(jq -r '.project' "$infra_config")"
-    echo "  Resource Group: $(jq -r '.resources.resourceGroup.name' "$infra_config")"
-    echo "  Container Registry: $(jq -r '.resources.containerRegistry.name' "$infra_config")"
-    echo "  Application Gateway: $(jq -r '.resources.applicationGateway.name' "$infra_config")"
-    echo "  VNet Name: $(jq -r '.resources.vnet.name' "$infra_config")"
+    echo "  Location: $(jq -r '.location' "$infra_config")"
+    echo "  Resource Group: $(jq -r '.resourceGroup.name' "$infra_config")"
+    echo "  Container Registry: $(jq -r '.containerRegistry.name' "$infra_config")"
+    echo "  Application Gateway: $(jq -r '.applicationGateway.name' "$infra_config")"
+    echo "  VNet Name: $(jq -r '.networking.virtualNetwork.name' "$infra_config")"
     
     # Tenant configuration if specified
     if [ -n "$tenant" ]; then
@@ -355,7 +357,7 @@ Examples:
 
   # Use in another script
   source $(dirname \$0)/../helpers/config-loader.sh
-  RESOURCE_GROUP=\$(get_infra_value "dev" ".resources.resourceGroup.name")
+  RESOURCE_GROUP=\$(get_infra_value "dev" ".resourceGroup.name")
   APP_IMAGE=\$(get_app_config "nbrly" "nbapp1" "dev" "image")
 
 EOF

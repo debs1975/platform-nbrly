@@ -12,6 +12,12 @@ source "$SCRIPT_DIR/config-loader.sh"
 # Configuration
 ENV=${ENV:-"dev"}
 TENANT=${1:-"all"}  # Accept tenant parameter: nbrly, bloom, or all
+
+# Validate environment is explicitly set (prevent accidental use of default)
+if [ "${ENV}" = "dev" ] && [ -z "${ENV+x}" ]; then
+    echo -e "${YELLOW}WARNING: ENV not explicitly set, defaulting to 'dev'${NC}" >&2
+fi
+
 TEMPLATES_DIR="$SCRIPT_DIR/../../manifests/templates"
 OUTPUT_DIR="$SCRIPT_DIR/../../manifests/.generated"
 BACKUP_DIR="$SCRIPT_DIR/../../manifests/.bak"
@@ -96,16 +102,16 @@ generate_manifest() {
     log "Generating manifest for $tenant/$app_key"
     
     # Get configuration values from infra config
-    local resource_group=$(get_infra_value "$ENV" ".resources.resourceGroup.name")
-    local acr_name=$(get_infra_value "$ENV" ".resources.containerRegistry.name")
+    local resource_group=$(get_infra_value "$ENV" ".resourceGroup.name")
+    local acr_name=$(get_infra_value "$ENV" ".containerRegistry.name")
     local acr_registry="${acr_name}.azurecr.io"
-    local container_app_env=$(get_infra_value "$ENV" ".resources.tenants.${tenant}.containerAppEnv.name")
-    local key_vault_name=$(get_infra_value "$ENV" ".resources.keyVault.name")
+    local container_app_env=$(get_infra_value "$ENV" ".containerAppEnvironments.${tenant}.name")
+    local key_vault_name=$(get_tenant_value "$tenant" "$ENV" ".keyVault.name")
     local subscription_id=$(get_subscription_id)
     
     # Get UAMI configuration from infra config
-    local uami_name=$(get_infra_value "$ENV" ".resources.tenants.${tenant}.managedIdentity.name")
-    local uami_resource_id=$(get_infra_value "$ENV" ".resources.tenants.${tenant}.managedIdentity.id")
+    local uami_name=$(get_infra_value "$ENV" ".managedIdentities.${tenant}.name")
+    local uami_resource_id=$(get_infra_value "$ENV" ".managedIdentities.${tenant}.id")
     # Get client ID from Azure (since it's not in config)
     local uami_client_id=$(az identity show --ids "$uami_resource_id" --query clientId -o tsv 2>/dev/null || echo "")
     
@@ -120,10 +126,14 @@ generate_manifest() {
     local min_replicas=$(get_app_config "$tenant" "$app_key" "$ENV" "minReplicas")
     local max_replicas=$(get_app_config "$tenant" "$app_key" "$ENV" "maxReplicas")
     
-    # Get database secret name if applicable
+    # Get database secret name if applicable (required for app2)
     local db_secret_name=""
     if [[ "$app_key" == *"app2" ]]; then
         db_secret_name=$(get_tenant_value "$tenant" "$ENV" ".database.connectionStringSecret")
+        if [ -z "$db_secret_name" ]; then
+            error "Database connection string secret name is required for $app_key but not found in tenant config"
+            return 1
+        fi
     fi
     
     # Container name (remove registry prefix)
@@ -194,12 +204,12 @@ generate_all_manifests() {
     
     if [ "$TENANT" = "all" ] || [ "$TENANT" = "nbrly" ]; then
         apps+=("nbrly nbapp1 containerapp-basic.yaml.template")
-        apps+=("nbrly nbapp2 containerapp-with-database.yaml.template")
+        apps+=("nbrly nbapp2 containerapp-basic.yaml.template")
     fi
     
     if [ "$TENANT" = "all" ] || [ "$TENANT" = "bloom" ]; then
         apps+=("bloom bmapp1 containerapp-basic.yaml.template")
-        apps+=("bloom bmapp2 containerapp-with-database.yaml.template")
+        apps+=("bloom bmapp2 containerapp-basic.yaml.template")
     fi
     
     for app_config in "${apps[@]}"; do
@@ -209,7 +219,7 @@ generate_all_manifests() {
         read -r tenant app_key template_name <<< "$app_config"
         
         local template_file="$TEMPLATES_DIR/$template_name"
-        local output_file="$OUTPUT_DIR/${tenant}-${app_key}.yaml"
+        local output_file="$OUTPUT_DIR/${tenant}-${app_key}-${ENV}.yaml"
         
         if generate_manifest "$tenant" "$app_key" "$template_file" "$output_file"; then
             ((success_count++))
@@ -230,7 +240,7 @@ generate_all_manifests() {
         # List only the manifests that were actually generated
         for app_config in "${apps[@]}"; do
             read -r tenant app_key template_name <<< "$app_config"
-            echo "  - manifests/.generated/${tenant}-${app_key}.yaml"
+            echo "  - manifests/.generated/${tenant}-${app_key}-${ENV}.yaml"
         done
         
         log ""
@@ -273,9 +283,8 @@ show_help() {
     echo "This script generates YAML manifests from templates by replacing placeholders"
     echo "with actual values from configuration files."
     echo
-    echo "Templates used:"
-    echo "  - containerapp-basic.yaml.template (for *app1)"
-    echo "  - containerapp-with-database.yaml.template (for *app2)"
+    echo "Template used:"
+    echo "  - containerapp-basic.yaml.template (includes KeyVault secret references)"
     echo
     echo "Configuration sources:"
     echo "  - config/parameters-dev.json (global configuration)"

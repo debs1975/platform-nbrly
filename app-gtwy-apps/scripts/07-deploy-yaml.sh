@@ -5,16 +5,17 @@
 # Orchestrates deployment by calling 08-deploy-yaml-nbrly.sh and 09-deploy-yaml-bloom.sh
 #
 # USAGE:
-#   ./07-deploy-yaml.sh [TAG]
+#   ./07-deploy-yaml.sh [ENV] [TAG]
 #
 # PARAMETERS:
+#   ENV    (Optional) Environment name. Default: 'dev'
 #   TAG    (Optional) Docker image tag to deploy. Default: 'latest'
 #          Updates YAML manifests with this tag before deployment
 #
 # EXAMPLES:
-#   ./07-deploy-yaml.sh                   # Deploy with 'latest' tag
-#   ./07-deploy-yaml.sh v1.0.0            # Deploy specific version
-#   ./07-deploy-yaml.sh dev-123           # Deploy dev build
+#   ./07-deploy-yaml.sh                   # Deploy dev env with 'latest' tag
+#   ./07-deploy-yaml.sh dev v1.0.0        # Deploy dev env with specific version
+#   ./07-deploy-yaml.sh stage v2.0.0      # Deploy stage env with specific version
 #
 # PREREQUISITES:
 #   - Azure CLI logged in (az login)
@@ -34,10 +35,10 @@ MAIN_SCRIPT_DIR="$SCRIPT_DIR"  # Preserve for later use
 source "$SCRIPT_DIR/helpers/config-loader.sh"
 
 # Configuration
-ENV=${ENV:-"dev"}
+ENV=${1:-"dev"}
+TAG=${2:-"latest"}
 RESOURCE_GROUP=$(get_infra_value "$ENV" ".resourceGroup.name")
 MANIFESTS_DIR="$MAIN_SCRIPT_DIR/../manifests/.generated"
-TAG=${1:-"latest"}
 
 # Colors for output
 RED='\033[0;31m'
@@ -88,11 +89,17 @@ main() {
     echo "================================================================================"
     log "DEPLOY ALL APPS USING YAML MANIFESTS (ORCHESTRATOR)"
     echo "================================================================================"
+    log "Script: 07-deploy-yaml.sh"
     log "Purpose: Deploy all apps using declarative YAML manifests"
     log "         Calls 08-deploy-yaml-nbrly.sh and 09-deploy-yaml-bloom.sh"
-    log "Environment: $ENV"
-    log "Resource Group: $RESOURCE_GROUP"
-    log "Image Tag: $TAG"
+    echo "-------------------------------------------------------------------------------"
+    log "Parameters:"
+    log "  Environment:         $ENV"
+    log "  Image Tag:           $TAG"
+    echo "-------------------------------------------------------------------------------"
+    log "Azure Resources:"
+    log "  Resource Group:      $RESOURCE_GROUP"
+    log "  Manifests Directory: $MANIFESTS_DIR"
     echo "================================================================================"
     echo
     
@@ -107,6 +114,11 @@ main() {
         success "NBRLY tenant deployed successfully"
     else
         error "Failed to deploy NBRLY tenant"
+        error "Please check the error messages from 08-deploy-yaml-nbrly.sh above"
+        error "Troubleshooting:"
+        error "  - Verify YAML manifests exist in: $MANIFESTS_DIR"
+        error "  - Check Container App Environment is running"
+        error "  - Ensure images are available in ACR"
         exit 1
     fi
     
@@ -118,6 +130,11 @@ main() {
         success "BLOOM tenant deployed successfully"
     else
         error "Failed to deploy BLOOM tenant"
+        error "Please check the error messages from 09-deploy-yaml-bloom.sh above"
+        error "Troubleshooting:"
+        error "  - Verify YAML manifests exist in: $MANIFESTS_DIR"
+        error "  - Check Container App Environment is running"
+        error "  - Ensure images are available in ACR"
         exit 1
     fi
     

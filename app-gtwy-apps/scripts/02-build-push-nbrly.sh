@@ -4,21 +4,24 @@
 # Builds Docker images for nbapp1 and nbapp2 and pushes to Azure Container Registry
 #
 # USAGE:
-#   ./02-build-push-nbrly.sh [TAG]
+#   ./02-build-push-nbrly.sh [ENV] [TAG]
 #
 # PARAMETERS:
+#   ENV - Environment name (default: "dev")
+#         Example values: "dev", "stage", "prod"
 #   TAG - Docker image tag (default: "latest")
 #         Example values: "v1.0.0", "latest", "dev-20240115"
 #
 # EXAMPLES:
-#   ./02-build-push-nbrly.sh
-#   ./02-build-push-nbrly.sh v1.0.0
-#   ./02-build-push-nbrly.sh dev-$(date +%Y%m%d)
+#   ./02-build-push-nbrly.sh                 # Uses dev env, latest tag
+#   ./02-build-push-nbrly.sh dev             # Uses dev env, latest tag
+#   ./02-build-push-nbrly.sh dev v1.0.0      # Uses dev env, v1.0.0 tag
+#   ./02-build-push-nbrly.sh stage v2.0.0    # Uses stage env, v2.0.0 tag
 #
 # PREREQUISITES:
 #   - Azure CLI logged in (az login)
 #   - Docker daemon running
-#   - config/infra-dev.json configured with ACR settings
+#   - config/infra-${ENV}.json configured with ACR settings
 #   - NBRLY application source code in ../nbrly/nbapp1 and ../nbrly/nbapp2
 #
 # BUILDS:
@@ -33,9 +36,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/helpers/config-loader.sh"
 
 # Configuration
-ENV=${ENV:-"dev"}
+ENV=${1:-"dev"}
+TAG=${2:-"latest"}
 TENANT="nbrly"
-TAG=${1:-"latest"}
 
 # Load configuration values
 check_jq || exit 1
@@ -139,11 +142,16 @@ main() {
     echo "================================================================================"
     log "BUILD AND PUSH NBRLY TENANT APPLICATIONS"
     echo "================================================================================"
+    log "Script: 02-build-push-nbrly.sh"
     log "Purpose: Build and push NBRLY tenant container images (nbapp1, nbapp2) to ACR"
-    log "ACR Registry: $ACR_REGISTRY"
-    log "Tenant: $TENANT"
-    log "Environment: $ENV"
-    log "Tag: $TAG"
+    echo "-------------------------------------------------------------------------------"
+    log "Parameters:"
+    log "  Environment:      $ENV"
+    log "  Tenant:           $TENANT"
+    log "  Image Tag:        $TAG"
+    echo "-------------------------------------------------------------------------------"
+    log "Azure Resources:"
+    log "  ACR Registry:     $ACR_REGISTRY"
     echo "================================================================================"
     echo
     
@@ -189,7 +197,14 @@ main() {
         
         exit 0
     else
-        error "Some NBRLY applications failed to build/push"
+        error "Failed to build and push some NBRLY applications"
+        error "Successful: $success_count/$total_count"
+        error "Please check the error messages above for details"
+        error "Common issues:"
+        error "  - Docker daemon not running"
+        error "  - Insufficient ACR permissions"
+        error "  - Network connectivity issues"
+        error "  - Invalid Dockerfile or build context"
         exit 1
     fi
 }

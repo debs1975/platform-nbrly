@@ -1,0 +1,34 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bloom-dev-cae-routes
+  namespace: default
+data:
+  routes.yaml: |
+    routes:
+      - name: bloom-dev-cae
+        match:
+          - path:
+              value: "/app1"
+              type: "PathPrefix"
+        destination:
+          - serviceName: ca-bloom-bmapp1-dev
+            servicePort: 8000
+            weight: 100
+      - name: bloom-dev-cae
+        match:
+          - path:
+              value: "/app2"
+              type: "PathPrefix"
+        destination:
+          - serviceName: ca-bloom-bmapp2-dev
+            servicePort: 8000
+            weight: 100
+---
+# HTTP Route Config for BLOOM Container App Environment
+# This configures path-based routing within the bloom-dev-cae environment
+# Route FQDN: bloom-dev-cae.graycliff-28ad9dd7.eastus.azurecontainerapps.io
+# 
+# Path routing:
+# /app1 -> ca-bloom-bmapp1-dev
+# /app2 -> ca-bloom-bmapp2-dev

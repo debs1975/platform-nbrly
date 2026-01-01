@@ -1,0 +1,44 @@
+# Container Apps Environment HTTP Routing Configuration
+# Tenant: #{TENANT}#
+# Environment: #{ENV}#
+# Note: Application Gateway handles SSL termination
+# CAE uses HTTP routing without custom domains (internal CAE with static IP)
+# Docs: https://learn.microsoft.com/en-us/azure/container-apps/rule-based-routing
+rules:
+  # Rule for app1: Route #{APP1_ROOT_PATH}# and #{APP1_ROOT_PATH}#/* to app1 container app
+  - description: "#{TENANT_DISPLAY_NAME}# App1 routing rule"
+    routes:
+      - match:
+          prefix: "#{APP1_ROOT_PATH}#"
+    targets:
+      - containerApp: "#{APP1_NAME}#"
+  
+  # Rule for app2: Route #{APP2_ROOT_PATH}# and #{APP2_ROOT_PATH}#/* to app2 container app
+  - description: "#{TENANT_DISPLAY_NAME}# App2 routing rule"
+    routes:
+      - match:
+          prefix: "#{APP2_ROOT_PATH}#"
+    targets:
+      - containerApp: "#{APP2_NAME}#"
+
+# Container Apps:
+#   - #{APP1_NAME}# (#{APP1_KEY}#)
+#   - #{APP2_NAME}# (#{APP2_KEY}#)
+#
+# Architecture:
+#   - Application Gateway: SSL termination at public IP
+#   - CAE: HTTP routing via static IP (#{CAE_STATIC_IP}#:80)
+#   - Container Apps: HTTP with allowInsecure=true
+#   - Apps must handle full path including #{APP1_ROOT_PATH}#, #{APP2_ROOT_PATH}# prefixes
+
+# Template Variables:
+# #{TENANT}#              - Tenant name (e.g., nbrly, bloom)
+# #{TENANT_DISPLAY_NAME}# - Tenant display name (e.g., NBRLY, BLOOM)
+# #{ENV}#                 - Environment (e.g., dev, stage, prod)
+# #{APP1_NAME}#           - Container App name for app1
+# #{APP1_KEY}#            - Application key for app1 (e.g., nbapp1, bmapp1)
+# #{APP1_ROOT_PATH}#      - Root path for app1 (e.g., /app1)
+# #{APP2_NAME}#           - Container App name for app2
+# #{APP2_KEY}#            - Application key for app2 (e.g., nbapp2, bmapp2)
+# #{APP2_ROOT_PATH}#      - Root path for app2 (e.g., /app2)
+# #{CAE_STATIC_IP}#       - Container App Environment static IP

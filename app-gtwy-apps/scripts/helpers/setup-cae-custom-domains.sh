@@ -79,8 +79,8 @@ main() {
     display_banner
     
     # Get configuration values
-    local resource_group=$(get_infra_value "$ENV" ".resources.resourceGroup.name")
-    local cert_file_path=$(jq -r '.customDomain.certificateFilePath' "$MAIN_SCRIPT_DIR/../config/parameters-dev.json")
+    local resource_group=$(get_infra_value "$ENV" ".resourceGroup.name")
+    local cert_file_path=$(jq -r '.customDomain.certificateFilePath' "$MAIN_SCRIPT_DIR/../config/parameters-${ENV}.json")
     local cert_password=${CERT_PASSWORD:-""}
     
     # Resolve certificate file path (relative to config directory)
@@ -109,8 +109,8 @@ main() {
     # Setup NBRLY CAE
     if [ "$TENANT" = "all" ] || [ "$TENANT" = "nbrly" ]; then
         ((total_count++))
-        local nbrly_cae=$(get_infra_value "$ENV" ".resources.tenants.nbrly.containerAppEnv.name")
-        local nbrly_domain=$(jq -r '.customDomain.tenantDomains.nbrly' "$MAIN_SCRIPT_DIR/../config/parameters-dev.json")
+        local nbrly_cae=$(get_infra_value "$ENV" ".containerAppEnvironments.nbrly.name")
+        local nbrly_domain=$(jq -r '.customDomain.tenantDomains.nbrly' "$MAIN_SCRIPT_DIR/../config/parameters-${ENV}.json")
         
         if setup_cae_custom_domain "nbrly" "$nbrly_cae" "$nbrly_domain" "$cert_file" "$cert_password" "$resource_group"; then
             ((success_count++))
@@ -121,8 +121,8 @@ main() {
     # Setup BLOOM CAE
     if [ "$TENANT" = "all" ] || [ "$TENANT" = "bloom" ]; then
         ((total_count++))
-        local bloom_cae=$(get_infra_value "$ENV" ".resources.tenants.bloom.containerAppEnv.name")
-        local bloom_domain=$(jq -r '.customDomain.tenantDomains.bloom' "$MAIN_SCRIPT_DIR/../config/parameters-dev.json")
+        local bloom_cae=$(get_infra_value "$ENV" ".containerAppEnvironments.bloom.name")
+        local bloom_domain=$(jq -r '.customDomain.tenantDomains.bloom' "$MAIN_SCRIPT_DIR/../config/parameters-${ENV}.json")
         
         if setup_cae_custom_domain "bloom" "$bloom_cae" "$bloom_domain" "$cert_file" "$cert_password" "$resource_group"; then
             ((success_count++))
@@ -141,11 +141,11 @@ main() {
         log "1. Verify DNS records point to the CAE static IPs"
         log "2. Verify custom domains:"
         if [ "$TENANT" = "all" ] || [ "$TENANT" = "nbrly" ]; then
-            local nbrly_domain=$(jq -r '.customDomain.tenantDomains.nbrly' "$MAIN_SCRIPT_DIR/../config/parameters-dev.json")
+            local nbrly_domain=$(jq -r '.customDomain.tenantDomains.nbrly' "$MAIN_SCRIPT_DIR/../config/parameters-${ENV}.json")
             log "   - NBRLY: https://$nbrly_domain"
         fi
         if [ "$TENANT" = "all" ] || [ "$TENANT" = "bloom" ]; then
-            local bloom_domain=$(jq -r '.customDomain.tenantDomains.bloom' "$MAIN_SCRIPT_DIR/../config/parameters-dev.json")
+            local bloom_domain=$(jq -r '.customDomain.tenantDomains.bloom' "$MAIN_SCRIPT_DIR/../config/parameters-${ENV}.json")
             log "   - BLOOM: https://$bloom_domain"
         fi
         return 0

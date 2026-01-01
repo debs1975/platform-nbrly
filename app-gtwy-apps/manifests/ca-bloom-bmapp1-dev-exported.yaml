@@ -1,0 +1,186 @@
+id: /subscriptions/984059e7-2907-4273-8569-703dddc5adfa/resourceGroups/astra-dev-eastus-rg/providers/Microsoft.App/containerapps/ca-bloom-bmapp1-dev
+identity:
+  type: None
+kind: containerapps
+location: East US
+name: ca-bloom-bmapp1-dev
+properties:
+  configuration:
+    activeRevisionsMode: Single
+    dapr: null
+    identitySettings: []
+    ingress:
+      additionalPortMappings: null
+      allowInsecure: false
+      clientCertificateMode: Ignore
+      corsPolicy: null
+      customDomains: null
+      exposedPort: 0
+      external: true
+      fqdn: ca-bloom-bmapp1-dev.graycliff-28ad9dd7.eastus.azurecontainerapps.io
+      ipSecurityRestrictions: null
+      stickySessions:
+        affinity: none
+      targetPort: 8000
+      targetPortHttpScheme: null
+      traffic:
+      - latestRevision: true
+        weight: 100
+      transport: Auto
+    maxInactiveRevisions: 100
+    registries:
+    - identity: system-environment
+      passwordSecretRef: ''
+      server: astradeveastusacr.azurecr.io
+      username: ''
+    revisionTransitionThreshold: null
+    runtime: null
+    secrets: null
+    service: null
+    targetLabel: ''
+  customDomainVerificationId: 898092E4F7AF00B2D2EE053193827B2D39F4E4DC16DCA39D0CE806E2F01AB1B9
+  delegatedIdentities: []
+  environmentId: /subscriptions/984059e7-2907-4273-8569-703dddc5adfa/resourceGroups/astra-dev-eastus-rg/providers/Microsoft.App/managedEnvironments/bloom-dev-cae
+  eventStreamEndpoint: https://eastus.azurecontainerapps.dev/subscriptions/984059e7-2907-4273-8569-703dddc5adfa/resourceGroups/astra-dev-eastus-rg/containerApps/ca-bloom-bmapp1-dev/eventstream
+  latestReadyRevisionName: ca-bloom-bmapp1-dev--0000001
+  latestRevisionFqdn: ca-bloom-bmapp1-dev--0000001.graycliff-28ad9dd7.eastus.azurecontainerapps.io
+  latestRevisionName: ca-bloom-bmapp1-dev--0000001
+  managedEnvironmentId: /subscriptions/984059e7-2907-4273-8569-703dddc5adfa/resourceGroups/astra-dev-eastus-rg/providers/Microsoft.App/managedEnvironments/bloom-dev-cae
+  outboundIpAddresses:
+  - 20.231.246.122
+  - 20.231.246.54
+  - 40.121.19.105
+  - 40.121.18.246
+  - 40.121.18.166
+  - 40.121.18.60
+  - 40.121.18.21
+  - 40.121.18.44
+  - 40.121.18.41
+  - 40.121.18.248
+  - 40.121.18.82
+  - 40.121.19.108
+  - 20.231.247.19
+  - 40.121.19.125
+  - 40.121.18.46
+  - 40.117.125.130
+  - 40.121.18.52
+  - 40.121.18.33
+  - 40.121.18.238
+  - 40.121.19.2
+  - 40.121.19.122
+  - 40.121.19.19
+  - 40.121.18.114
+  - 20.231.246.253
+  - 40.121.18.255
+  - 40.121.18.164
+  - 40.117.121.106
+  - 40.121.18.27
+  - 40.121.18.156
+  - 40.121.18.117
+  - 40.121.18.197
+  - 40.121.18.133
+  - 40.121.18.112
+  - 40.121.18.106
+  - 20.241.227.6
+  - 40.121.19.89
+  - 40.121.19.83
+  - 40.121.18.131
+  - 40.121.18.201
+  - 40.121.18.170
+  - 40.121.18.242
+  - 13.92.130.42
+  - 40.121.19.42
+  - 40.121.18.73
+  - 40.121.18.43
+  - 20.241.226.169
+  - 51.8.12.17
+  - 4.156.180.142
+  - 20.242.162.124
+  - 40.121.19.74
+  - 40.121.19.40
+  - 40.121.18.62
+  - 40.121.18.244
+  - 20.127.248.50
+  - 20.241.171.30
+  - 20.169.229.88
+  - 20.169.229.46
+  - 20.169.229.29
+  - 20.169.229.38
+  - 20.169.229.62
+  - 20.169.229.109
+  - 20.169.229.92
+  - 20.169.229.27
+  - 20.169.229.51
+  - 20.169.229.42
+  - 20.241.172.248
+  - 48.216.192.198
+  - 40.90.243.232
+  - 40.90.242.126
+  - 135.237.112.47
+  - 51.8.74.190
+  - 4.157.197.142
+  - 172.210.91.191
+  - 172.210.90.42
+  - 40.90.243.227
+  - 40.90.243.72
+  - 20.241.172.250
+  - 52.234.235.220
+  - 57.152.55.92
+  - 172.212.36.156
+  - 172.210.121.45
+  - 172.214.2.208
+  - 51.8.15.68
+  - 172.210.90.119
+  - 134.33.213.81
+  - 128.203.83.220
+  - 20.241.192.93
+  - 20.246.203.138
+  - 172.212.121.150
+  - 172.171.186.158
+  - 52.249.213.152
+  - 74.179.213.114
+  - 4.246.239.152
+  - 4.156.216.65
+  - 4.157.231.174
+  - 172.171.168.136
+  - 20.185.213.14
+  - 20.246.203.140
+  - 13.82.216.169
+  - 13.82.216.172
+  - 13.82.216.149
+  - 52.170.33.171
+  - 135.234.244.158
+  patchingMode: Automatic
+  provisioningState: Succeeded
+  runningStatus: Running
+  template:
+    containers:
+    - image: astradeveastusacr.azurecr.io/bloom-bmapp1:latest
+      imageType: ContainerImage
+      name: ca-bloom-bmapp1-dev
+      probes: []
+      resources:
+        cpu: 0.5
+        ephemeralStorage: 2Gi
+        memory: 1Gi
+    initContainers: null
+    revisionSuffix: ''
+    scale:
+      cooldownPeriod: 300
+      maxReplicas: 10
+      minReplicas: 0
+      pollingInterval: 30
+      rules: null
+    serviceBinds: null
+    terminationGracePeriodSeconds: null
+    volumes: []
+  workloadProfileName: Consumption
+resourceGroup: astra-dev-eastus-rg
+systemData:
+  createdAt: '2025-11-23T18:29:24.8270457'
+  createdBy: debashisg@astrapiaconsulting.com
+  createdByType: User
+  lastModifiedAt: '2025-11-24T17:23:20.6963385'
+  lastModifiedBy: debashisg@astrapiaconsulting.com
+  lastModifiedByType: User
+type: Microsoft.App/containerApps

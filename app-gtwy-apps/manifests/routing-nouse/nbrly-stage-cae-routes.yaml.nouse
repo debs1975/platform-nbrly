@@ -1,0 +1,34 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nbrly-stage-cae-routes
+  namespace: default
+data:
+  routes.yaml: |
+    routes:
+      - name: nbrly-stage-cae
+        match:
+          - path:
+              value: "/app1"
+              type: "PathPrefix"
+        destination:
+          - serviceName: ca-nbrly-nbapp1-stage
+            servicePort: 8000
+            weight: 100
+      - name: nbrly-stage-cae
+        match:
+          - path:
+              value: "/app2"
+              type: "PathPrefix"
+        destination:
+          - serviceName: ca-nbrly-nbapp2-stage
+            servicePort: 8000
+            weight: 100
+---
+# HTTP Route Config for NBRLY Container App Environment
+# This configures path-based routing within the nbrly-stage-cae environment
+# Route FQDN: nbrly-stage-cae.placeholder-stage.eastus.azurecontainerapps.io
+# 
+# Path routing:
+# /app1 -> ca-nbrly-nbapp1-stage
+# /app2 -> ca-nbrly-nbapp2-stage

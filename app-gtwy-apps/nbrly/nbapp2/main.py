@@ -31,8 +31,10 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", "dev")
 ROOT_PATH = os.getenv("ROOT_PATH", "/app2")
 APP_NAME = os.getenv("APP_NAME", "NBRLY-App2")
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
-DATABASE_URL = os.getenv("DATABASE_URL", None)  # From Key Vault
-SECRET_KEY = os.getenv("SECRET_KEY", None)  # From Key Vault
+
+# Secrets from Key Vault (via Container Apps secret references)
+SAMPLE_API_KEY = os.getenv("SAMPLE_API_KEY", None)  # From Key Vault: nbrly-api-key
+DATABASE_URL = os.getenv("DATABASE_URL", None)  # From Key Vault: nbrly-psql-connection-string
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -83,7 +85,8 @@ async def health_check() -> Dict[str, Any]:
         "app": "nbapp2",
         "checks": {
             "api": "ok",
-            "secrets_loaded": "ok" if SECRET_KEY else "missing"
+            "api_key_loaded": "ok" if SAMPLE_API_KEY else "missing",
+            "database_url_loaded": "ok" if DATABASE_URL else "missing"
         }
     }
 
@@ -96,7 +99,8 @@ async def readiness_check() -> Dict[str, Any]:
     """
     checks = {
         "environment_vars": "ok",
-        "secrets": "ok" if SECRET_KEY else "fail"
+        "api_key": "ok" if SAMPLE_API_KEY else "warn",
+        "database_url": "ok" if DATABASE_URL else "warn"
     }
     
     # Check database connectivity (basic check)
@@ -146,7 +150,44 @@ async def get_info() -> Dict[str, Any]:
         "root_path": ROOT_PATH,
         "allowed_origins": ALLOWED_ORIGINS,
         "database_configured": bool(DATABASE_URL),
-        "secrets_configured": bool(SECRET_KEY),
+        "api_key_configured": bool(SAMPLE_API_KEY),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app_router.get("/api/secrets-status")
+async def get_secrets_status() -> Dict[str, Any]:
+    """
+    Display status of KeyVault secrets (demonstrates secret retrieval)
+    Shows masked values for security
+    """
+    def mask_secret(secret: str) -> str:
+        """Mask secret showing only first/last 4 chars"""
+        if not secret or len(secret) < 8:
+            return "****" if secret else None
+        return f"{secret[:4]}...{secret[-4:]}"
+    
+    return {
+        "tenant": "nbrly",
+        "app": "nbapp2",
+        "secrets": {
+            "sample_api_key": {
+                "configured": bool(SAMPLE_API_KEY),
+                "source": "KeyVault: nbrly-api-key",
+                "value_preview": mask_secret(SAMPLE_API_KEY) if SAMPLE_API_KEY else None,
+                "length": len(SAMPLE_API_KEY) if SAMPLE_API_KEY else 0
+            },
+            "database_url": {
+                "configured": bool(DATABASE_URL),
+                "source": "KeyVault: nbrly-psql-connection-string",
+                "value_preview": mask_secret(DATABASE_URL) if DATABASE_URL else None,
+                "length": len(DATABASE_URL) if DATABASE_URL else 0
+            }
+        },
+        "managed_identity": {
+            "client_id": os.getenv("AZURE_CLIENT_ID", "not-set"),
+            "authentication": "User Assigned Managed Identity"
+        },
         "timestamp": datetime.utcnow().isoformat()
     }
 

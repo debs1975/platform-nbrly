@@ -31,12 +31,18 @@ CONFIG_DIR="${SCRIPT_DIR}/../../config"
 MANIFESTS_DIR="${SCRIPT_DIR}/../../manifests"
 ROUTING_TEMPLATE_DIR="${MANIFESTS_DIR}/routing"
 ROUTING_OUTPUT_DIR="${MANIFESTS_DIR}/routing"
-INFRA_CONFIG="${CONFIG_DIR}/infra-dev.json"
+ENV=${2:-dev}
+INFRA_CONFIG="${CONFIG_DIR}/infra-${ENV}.json"
 
 # Validate inputs
 TENANT="${1:-all}"
 if [[ ! "$TENANT" =~ ^(nbrly|bloom|all)$ ]]; then
     error "Invalid tenant: $TENANT. Must be 'nbrly', 'bloom', or 'all'"
+    exit 1
+fi
+
+if [[ ! "$ENV" =~ ^(dev|stage|prod)$ ]]; then
+    error "Invalid environment: $ENV. Must be 'dev', 'stage', or 'prod'"
     exit 1
 fi
 
@@ -130,11 +136,11 @@ configure_tenant_routing() {
     local keyvault_name
     local cert_name
     
-    cae_name=$(jq -r ".resources.tenants.${tenant}.containerAppEnv.name" "$INFRA_CONFIG")
-    domain=$(jq -r ".resources.tenants.${tenant}.hostName" "$INFRA_CONFIG")
-    resource_group=$(jq -r ".resources.resourceGroup.name" "$INFRA_CONFIG")
-    keyvault_name=$(jq -r ".resources.keyVault.name" "$INFRA_CONFIG")
-    cert_name=$(jq -r ".resources.sslCertificate.name" "$INFRA_CONFIG")
+    cae_name=$(jq -r ".containerAppEnvironments.${tenant}.name" "$INFRA_CONFIG")
+    domain=$(get_tenant_value "$tenant" "$ENV" ".domain")
+    resource_group=$(jq -r ".resourceGroup.name" "$INFRA_CONFIG")
+    keyvault_name=$(jq -r ".keyVault.name" "$INFRA_CONFIG")
+    cert_name=$(jq -r ".certificates.wildcard.certificateName" "$INFRA_CONFIG")
     
     log "CAE: $cae_name"
     log "Domain: $domain"
@@ -244,7 +250,7 @@ main() {
     log ""
     
     local agw_ip
-    agw_ip=$(jq -r ".resources.publicIp.ipAddress" "$INFRA_CONFIG")
+    agw_ip=$(jq -r \".applicationGateway.publicIPAddress.address\" \"$INFRA_CONFIG\")
     
     if [[ "$TENANT" == "all" || "$TENANT" == "nbrly" ]]; then
         log "NBRLY:"

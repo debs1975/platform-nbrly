@@ -98,15 +98,25 @@ validate_requirements
 log_info "Loading configuration for tenant '$TENANT_NAME' in environment '$ENVIRONMENT'"
 
 # Parse infrastructure configuration
-SUBSCRIPTION_ID=$(parse_config "$INFRA_FILE" ".subscriptionId")
-RESOURCE_GROUP=$(parse_config "$INFRA_FILE" ".resourceGroupName")
+SUBSCRIPTION_ID=$(parse_config "$INFRA_FILE" ".subscription.id")
+RESOURCE_GROUP=$(parse_config "$INFRA_FILE" ".resourceGroup.name")
 LOCATION=$(parse_config "$INFRA_FILE" ".location")
 APPGW_NAME=$(parse_config "$INFRA_FILE" ".applicationGateway.name")
-SSL_CERT_NAME=$(parse_config "$INFRA_FILE" ".applicationGateway.sslCertificateName")
+SSL_CERT_NAME=$(parse_config "$INFRA_FILE" ".applicationGateway.sslCertificateName" 2>/dev/null || echo "")
+
+# If SSL certificate name is not in config, retrieve it from Application Gateway quietly
+if [[ -z "$SSL_CERT_NAME" ]]; then
+    SSL_CERT_NAME=$(az network application-gateway ssl-cert list \
+        --gateway-name "$APPGW_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --query "[0].name" -o tsv 2>/dev/null || echo "astrapiaio")
+fi
 
 # Parse tenant configuration  
-DOMAIN_NAME=$(parse_config "$TENANT_CONFIG_FILE" ".domainName")
+DOMAIN_NAME=$(parse_config "$TENANT_CONFIG_FILE" ".domain")
+CAE_NAME=$(parse_config "$TENANT_CONFIG_FILE" ".containerAppEnvironment.name")
 CAE_STATIC_IP=$(parse_config "$TENANT_CONFIG_FILE" ".containerAppEnvironment.staticIp")
+CAE_DEFAULT_DOMAIN=$(parse_config "$TENANT_CONFIG_FILE" ".containerAppEnvironment.defaultDomain")
 
 # Validate required values
 if [[ -z "$CAE_STATIC_IP" || "$CAE_STATIC_IP" == "null" ]]; then
@@ -115,12 +125,21 @@ if [[ -z "$CAE_STATIC_IP" || "$CAE_STATIC_IP" == "null" ]]; then
     exit 1
 fi
 
-# Derived resource names (following naming convention)
-readonly BACKEND_POOL_NAME="${TENANT_NAME}-dev-bp"
-readonly HTTP_LISTENER_NAME="${TENANT_NAME}-dev-hl"
-readonly HEALTH_PROBE_NAME="${TENANT_NAME}-dev-probe"
-readonly HTTP_SETTINGS_NAME="${TENANT_NAME}-dev-https"
-readonly ROUTING_RULE_NAME="${TENANT_NAME}-dev-rr"
+if [[ -z "$CAE_DEFAULT_DOMAIN" || "$CAE_DEFAULT_DOMAIN" == "null" ]]; then
+    log_error "Container App Environment default domain not found for tenant: $TENANT_NAME"
+    log_error "Please run: ./03-deploy-tenant-resources.sh $TENANT_NAME $ENVIRONMENT"
+    exit 1
+fi
+
+# Construct backend pool FQDN: <cae-name>.<defaultDomain>
+BACKEND_POOL_FQDN="${CAE_NAME}.${CAE_DEFAULT_DOMAIN}"
+
+# Derived resource names (following naming convention with environment)
+readonly BACKEND_POOL_NAME="${TENANT_NAME}-${ENVIRONMENT}-bp"
+readonly HTTP_LISTENER_NAME="${TENANT_NAME}-${ENVIRONMENT}-hl"
+readonly HEALTH_PROBE_NAME="${TENANT_NAME}-${ENVIRONMENT}-probe"
+readonly HTTP_SETTINGS_NAME="${TENANT_NAME}-${ENVIRONMENT}-https"
+readonly ROUTING_RULE_NAME="${TENANT_NAME}-${ENVIRONMENT}-rr"
 
 # Display configuration
 log_info "========================================================================="
@@ -130,8 +149,9 @@ log_info "Tenant:              $TENANT_NAME"
 log_info "Environment:         $ENVIRONMENT"
 log_info "Domain:              $DOMAIN_NAME"
 log_info "Application Gateway: $APPGW_NAME"
-log_info "Backend IP:          $CAE_STATIC_IP"
-log_info "SSL Certificate:     $SSL_CERT_NAME"
+log_info "CAE:                 $CAE_NAME"
+log_info "Backend Pool FQDN:    $BACKEND_POOL_FQDN"
+log_info "Backend Static IP:   $CAE_STATIC_IP"
 log_info "========================================================================="
 
 TEMP_DIR=""
@@ -149,10 +169,36 @@ main() {
     log_info "Starting Application Gateway Configuration"
     log_info "========================================================================="
 
-    # Login to Azure and set subscription
-    azure_login
-    log_info "Setting Azure subscription to: $SUBSCRIPTION_ID"
-    az account set --subscription "$SUBSCRIPTION_ID"
+    # Login to Azure with environment-specific credentials
+    azure_login "$ENVIRONMENT"
+    
+    # Set Azure subscription
+    if [ -n "$SUBSCRIPTION_ID" ] && [ "$SUBSCRIPTION_ID" != "null" ]; then
+        log_info "Setting Azure subscription to: $SUBSCRIPTION_ID"
+        az account set --subscription "$SUBSCRIPTION_ID"
+    else
+        log_warning "No subscription ID found in infra file. Using current subscription context."
+        CURRENT_SUBSCRIPTION=$(az account show --query "id" -o tsv 2>/dev/null || echo "")
+        if [ -n "$CURRENT_SUBSCRIPTION" ]; then
+            log_info "Current subscription: $CURRENT_SUBSCRIPTION"
+            SUBSCRIPTION_ID="$CURRENT_SUBSCRIPTION"
+        else
+            log_error "No subscription context available. Please ensure you're logged in and have a valid subscription."
+            exit 1
+        fi
+    fi
+
+    log_info ""
+    log_info "┌────────────────────────────────────────────────────────────────────────────────┐"
+    log_info "│ STEP 1: Creating Backend Pool                                                  │"
+    log_info "└────────────────────────────────────────────────────────────────────────────────┘"
+    log_info ""
+    log_info "  Backend Pool Configuration:"
+    log_info "    • Name:                $BACKEND_POOL_NAME"
+    log_info "    • Backend FQDN:        $BACKEND_POOL_FQDN"
+    log_info "    • Application Gateway: $APPGW_NAME"
+    log_info "    • Tenant:              $TENANT_NAME"
+    log_info ""
 
     # 1. Create/Update Backend Pool
     log_info "Configuring backend pool: $BACKEND_POOL_NAME"
@@ -160,44 +206,107 @@ main() {
         --gateway-name "$APPGW_NAME" \
         --resource-group "$RESOURCE_GROUP" \
         --name "$BACKEND_POOL_NAME" &>/dev/null; then
-        log_info "Updating existing backend pool with static IP: $CAE_STATIC_IP"
+        log_info "Updating existing backend pool with FQDN: $BACKEND_POOL_FQDN"
         az network application-gateway address-pool update \
             --gateway-name "$APPGW_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --name "$BACKEND_POOL_NAME" \
-            --servers "$CAE_STATIC_IP"
+            --servers "$BACKEND_POOL_FQDN"
     else
-        log_info "Creating new backend pool with static IP: $CAE_STATIC_IP"
+        log_info "Creating new backend pool with FQDN: $BACKEND_POOL_FQDN"
         az network application-gateway address-pool create \
             --gateway-name "$APPGW_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --name "$BACKEND_POOL_NAME" \
-            --servers "$CAE_STATIC_IP"
+            --servers "$BACKEND_POOL_FQDN"
     fi
     log_success "Backend pool configured: $BACKEND_POOL_NAME"
 
-    # 2. Create/Update Health Probe
+    log_info ""
+    log_info "┌────────────────────────────────────────────────────────────────────────────────┐"
+    log_info "│ STEP 2: Creating HTTP Settings                                                 │"
+    log_info "└────────────────────────────────────────────────────────────────────────────────┘"
+    log_info ""
+    log_info "  HTTP Settings Configuration:"
+    log_info "    • Name:                $HTTP_SETTINGS_NAME"
+    log_info "    • Port:                443"
+    log_info "    • Protocol:            HTTPS"
+    log_info "    • Host override:       From backend target"
+    log_info "    • Cookie Affinity:     Disabled"
+    log_info "    • Tenant:              $TENANT_NAME"
+    log_info ""
+
+    # 2. Create/Update HTTP Settings (without probe first)
+    log_info "Configuring HTTP settings: $HTTP_SETTINGS_NAME"
+    if az network application-gateway http-settings show \
+        --gateway-name "$APPGW_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --name "$HTTP_SETTINGS_NAME" &>/dev/null; then
+        log_info "Updating existing HTTP settings to pick hostname from backend target"
+        # First, remove any explicit hostname to avoid conflict
+        az network application-gateway http-settings update \
+            --gateway-name "$APPGW_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$HTTP_SETTINGS_NAME" \
+            --host-name "" \
+            --no-wait
+        # Then set to pick hostname from backend pool
+        az network application-gateway http-settings update \
+            --gateway-name "$APPGW_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$HTTP_SETTINGS_NAME" \
+            --port 443 \
+            --protocol "Https" \
+            --host-name-from-backend-pool true
+    else
+        log_info "Creating new HTTP settings to pick hostname from backend target"
+        az network application-gateway http-settings create \
+            --gateway-name "$APPGW_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$HTTP_SETTINGS_NAME" \
+            --port 443 \
+            --protocol "Https" \
+            --host-name-from-backend-pool true
+    fi
+    log_success "HTTP settings configured: $HTTP_SETTINGS_NAME"
+
+    log_info ""
+    log_info "┌────────────────────────────────────────────────────────────────────────────────┐"
+    log_info "│ STEP 3: Creating Health Probe                                                  │"
+    log_info "└────────────────────────────────────────────────────────────────────────────────┘"
+    log_info ""
+    log_info "  Health Probe Configuration:"
+    log_info "    • Name:                $HEALTH_PROBE_NAME"
+    log_info "    • Port:                443"
+    log_info "    • Protocol:            HTTPS"
+    log_info "    • Pick hostname:       From backend settings"
+    log_info "    • Tenant:              $TENANT_NAME"
+    log_info ""
+
+    # 3. Create/Update Health Probe
     log_info "Configuring health probe: $HEALTH_PROBE_NAME"
     if az network application-gateway probe show \
         --gateway-name "$APPGW_NAME" \
         --resource-group "$RESOURCE_GROUP" \
         --name "$HEALTH_PROBE_NAME" &>/dev/null; then
-        log_info "Updating existing health probe for domain: $DOMAIN_NAME"
+        log_info "Updating existing health probe to pick hostname from backend settings"
+        # Update probe to remove explicit host and set to pick from backend settings in single command
         az network application-gateway probe update \
             --gateway-name "$APPGW_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --name "$HEALTH_PROBE_NAME" \
             --protocol "Https" \
-            --host "$DOMAIN_NAME" \
+            --host-name-from-http-settings true \
+            --host "" \
             --path "/"
     else
-        log_info "Creating new health probe for domain: $DOMAIN_NAME"
+        log_info "Creating new health probe to pick hostname from backend settings"
         az network application-gateway probe create \
             --gateway-name "$APPGW_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --name "$HEALTH_PROBE_NAME" \
             --protocol "Https" \
-            --host "$DOMAIN_NAME" \
+            --host-name-from-http-settings true \
             --path "/" \
             --interval 30 \
             --timeout 30 \
@@ -205,31 +314,33 @@ main() {
     fi
     log_success "Health probe configured: $HEALTH_PROBE_NAME"
 
-    # 3. Create/Update HTTP Settings
-    log_info "Configuring HTTP settings: $HTTP_SETTINGS_NAME"
-    if az network application-gateway http-settings show \
+    log_info ""
+    log_info "┌────────────────────────────────────────────────────────────────────────────────┐"
+    log_info "│ STEP 3.5: Associating Health Probe with HTTP Settings                          │"
+    log_info "└────────────────────────────────────────────────────────────────────────────────┘"
+    log_info ""
+
+    # 3.5. Associate probe with HTTP settings
+    log_info "Associating health probe with HTTP settings"
+    az network application-gateway http-settings update \
         --gateway-name "$APPGW_NAME" \
         --resource-group "$RESOURCE_GROUP" \
-        --name "$HTTP_SETTINGS_NAME" &>/dev/null; then
-        log_info "Updating existing HTTP settings"
-        az network application-gateway http-settings update \
-            --gateway-name "$APPGW_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
-            --name "$HTTP_SETTINGS_NAME" \
-            --host-name "$DOMAIN_NAME" \
-            --probe "$HEALTH_PROBE_NAME"
-    else
-        log_info "Creating new HTTP settings"
-        az network application-gateway http-settings create \
-            --gateway-name "$APPGW_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
-            --name "$HTTP_SETTINGS_NAME" \
-            --port 443 \
-            --protocol "Https" \
-            --probe "$HEALTH_PROBE_NAME" \
-            --host-name "$DOMAIN_NAME"
-    fi
-    log_success "HTTP settings configured: $HTTP_SETTINGS_NAME"
+        --name "$HTTP_SETTINGS_NAME" \
+        --probe "$HEALTH_PROBE_NAME"
+    log_success "Health probe associated with HTTP settings"
+
+    log_info ""
+    log_info "┌────────────────────────────────────────────────────────────────────────────────┐"
+    log_info "│ STEP 4: Creating HTTPS Listener                                                │"
+    log_info "└────────────────────────────────────────────────────────────────────────────────┘"
+    log_info ""
+    log_info "  HTTPS Listener Configuration:"
+    log_info "    • Name:                $HTTP_LISTENER_NAME"
+    log_info "    • Frontend Port:       443 (HTTPS)"
+    log_info "    • Certificate:         astrapiaio"
+    log_info "    • Application Gateway: $APPGW_NAME"
+    log_info "    • Tenant:              $TENANT_NAME"
+    log_info ""
 
     # 4. Create/Update HTTPS Listener
     log_info "Configuring HTTPS listener: $HTTP_LISTENER_NAME"
@@ -256,6 +367,19 @@ main() {
             --ssl-cert "$SSL_CERT_NAME"
     fi
     log_success "HTTPS listener configured: $HTTP_LISTENER_NAME"
+
+    log_info ""
+    log_info "┌────────────────────────────────────────────────────────────────────────────────┐"
+    log_info "│ STEP 5: Creating Routing Rule                                                  │"
+    log_info "└────────────────────────────────────────────────────────────────────────────────┘"
+    log_info ""
+    log_info "  Routing Rule Configuration:"
+    log_info "    • Name:                $ROUTING_RULE_NAME"
+    log_info "    • Path:                /$TENANT_NAME"
+    log_info "    • Backend Pool:        $BACKEND_POOL_NAME"
+    log_info "    • HTTP Settings:       $HTTP_SETTINGS_NAME"
+    log_info "    • Tenant:              $TENANT_NAME"
+    log_info ""
 
     # 5. Create/Update Routing Rule
     log_info "Configuring routing rule: $ROUTING_RULE_NAME"
@@ -300,6 +424,18 @@ main() {
     fi
     log_success "Routing rule configured: $ROUTING_RULE_NAME"
 
+    log_info ""
+    log_info "┌────────────────────────────────────────────────────────────────────────────────┐"
+    log_info "│ STEP 6: Updating Configuration Files                                           │"
+    log_info "└────────────────────────────────────────────────────────────────────────────────┘"
+    log_info ""
+    log_info "  Configuration Update:"
+    log_info "    • Backend Pool:        $BACKEND_POOL_NAME → Config"
+    log_info "    • Health Probe:        $HEALTH_PROBE_NAME → Config"
+    log_info "    • HTTP Settings:       $HTTP_SETTINGS_NAME → Config"
+    log_info "    • Routing Rule:        $ROUTING_RULE_NAME → Config"
+    log_info ""
+
     # 6. Update Configuration Files
     log_info "Updating configuration files with routing details..."
     
@@ -314,7 +450,7 @@ main() {
     log_success "Application Gateway Routing Configuration Complete for '$TENANT_NAME'"
     log_success "========================================================================="
     log_info "Configured Components:"
-    log_info "  • Backend Pool:      $BACKEND_POOL_NAME → $CAE_STATIC_IP"
+    log_info "  • Backend Pool:      $BACKEND_POOL_NAME → $BACKEND_POOL_FQDN"
     log_info "  • Health Probe:      $HEALTH_PROBE_NAME → $DOMAIN_NAME"
     log_info "  • HTTP Settings:     $HTTP_SETTINGS_NAME"
     log_info "  • HTTPS Listener:    $HTTP_LISTENER_NAME → $DOMAIN_NAME"
@@ -340,4 +476,4 @@ done
 
 # Execute main function
 main "$@"
-log_info "You should be able to access the application at https://${tenantHostName}"
+log_info "You should be able to access the application at https://${DOMAIN_NAME}"

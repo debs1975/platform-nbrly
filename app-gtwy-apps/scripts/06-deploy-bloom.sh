@@ -4,21 +4,24 @@
 # Deploys bmapp1 and bmapp2 with proper configuration
 #
 # USAGE:
-#   ./06-deploy-bloom.sh [TAG]
+#   ./06-deploy-bloom.sh [ENV] [TAG]
 #
 # PARAMETERS:
+#   ENV - Environment name (default: "dev")
+#         Example values: "dev", "stage", "prod"
 #   TAG - Docker image tag (default: "latest")
 #         Example values: "v1.0.0", "latest", "dev-20240115"
 #
 # EXAMPLES:
-#   ./06-deploy-bloom.sh
-#   ./06-deploy-bloom.sh v1.0.0
-#   ./06-deploy-bloom.sh dev-$(date +%Y%m%d)
+#   ./06-deploy-bloom.sh                     # Uses dev env, latest tag
+#   ./06-deploy-bloom.sh dev                 # Uses dev env, latest tag
+#   ./06-deploy-bloom.sh dev v1.0.0          # Uses dev env, v1.0.0 tag
+#   ./06-deploy-bloom.sh stage v2.0.0        # Uses stage env, v2.0.0 tag
 #
 # PREREQUISITES:
 #   - Azure CLI logged in (az login)
 #   - Container images built and pushed to ACR
-#   - config/infra-dev.json configured
+#   - config/infra-${ENV}.json configured
 #   - Azure Container Apps environment exists
 #   - BLOOM tenant configuration in config/bloom/
 #
@@ -35,9 +38,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/helpers/config-loader.sh"
 
 # Configuration
-ENV=${ENV:-"dev"}
+ENV=${1:-"dev"}
+TAG=${2:-"latest"}
 TENANT="bloom"
-TAG=${1:-"latest"}
 
 # Load configuration values
 check_jq || exit 1
@@ -46,7 +49,7 @@ ACR_NAME=$(get_infra_value "$ENV" ".containerRegistry.name") # Loaded from infra
 ACR_REGISTRY="${ACR_NAME}.azurecr.io"
 
 # Get container app environment from infra config (tenant-specific)
-CONTAINER_APP_ENV=$(get_infra_value "$ENV" ".containerAppEnvironments.${TENANT}-dev-cae.name")
+CONTAINER_APP_ENV=$(get_infra_value "$ENV" ".containerAppEnvironments.${TENANT}.name")
 
 # Colors for output
 RED='\033[0;31m'
@@ -92,6 +95,95 @@ check_containerapp_extension() {
     success "Container Apps extension ready"
 }
 
+# Grant KeyVault RBAC permissions to managed identity
+grant_keyvault_access() {
+    local uami_name=$1
+    local kv_name=$2
+    
+    log "Granting KeyVault access to managed identity: $uami_name"
+    
+    # Get managed identity principal ID
+    local uami_principal_id=$(az identity show \
+        --name "$uami_name" \
+        --resource-group "$RESOURCE_GROUP" \
+        --query principalId -o tsv)
+    
+    if [ -z "$uami_principal_id" ]; then
+        error "Failed to get principal ID for managed identity: $uami_name"
+        return 1
+    fi
+    
+    # Get KeyVault resource ID
+    local kv_id=$(az keyvault show --name "$kv_name" --query id -o tsv)
+    
+    # Check if role assignment already exists
+    local existing_role=$(az role assignment list \
+        --assignee "$uami_principal_id" \
+        --scope "$kv_id" \
+        --role "Key Vault Secrets User" \
+        --query "[].id" -o tsv)
+    
+    if [ -n "$existing_role" ]; then
+        log "Role assignment already exists for $uami_name"
+    else
+        log "Creating 'Key Vault Secrets User' role assignment..."
+        az role assignment create \
+            --role "Key Vault Secrets User" \
+            --assignee-object-id "$uami_principal_id" \
+            --assignee-principal-type ServicePrincipal \
+            --scope "$kv_id" \
+            --output none 2>/dev/null || warning "Role assignment may already exist"
+        
+        success "✓ KeyVault access granted to $uami_name"
+    fi
+}
+
+# Grant ACR pull access to managed identity
+grant_acr_pull_access() {
+    local uami_name=$1
+    local acr_name=$2
+    
+    log "Granting ACR pull access to managed identity: $uami_name"
+    
+    # Get managed identity principal ID
+    local uami_principal_id=$(az identity show \
+        --name "$uami_name" \
+        --resource-group "$RESOURCE_GROUP" \
+        --query principalId -o tsv)
+    
+    if [ -z "$uami_principal_id" ]; then
+        error "Failed to get principal ID for managed identity: $uami_name"
+        return 1
+    fi
+    
+    # Get ACR resource ID
+    local acr_id=$(az acr show --name "$acr_name" --query id -o tsv)
+    
+    # Check if role assignment already exists
+    local existing_role=$(az role assignment list \
+        --assignee "$uami_principal_id" \
+        --scope "$acr_id" \
+        --role "AcrPull" \
+        --query "[].id" -o tsv)
+    
+    if [ -n "$existing_role" ]; then
+        log "AcrPull role assignment already exists for $uami_name"
+    else
+        log "Creating 'AcrPull' role assignment..."
+        az role assignment create \
+            --role "AcrPull" \
+            --assignee-object-id "$uami_principal_id" \
+            --assignee-principal-type ServicePrincipal \
+            --scope "$acr_id" \
+            --output none 2>/dev/null || warning "Role assignment may already exist"
+        
+        log "Waiting 15 seconds for RBAC propagation..."
+        sleep 15
+        
+        success "✓ ACR pull access granted to $uami_name"
+    fi
+}
+
 # Deploy BLOOM Container App
 deploy_bloom_app() {
     local app_key=$1
@@ -106,8 +198,17 @@ deploy_bloom_app() {
     local max_replicas=$(get_app_config "$TENANT" "$app_key" "$ENV" "maxReplicas")
     
     # Get managed identity configuration from infra config
-    local uami_name=$(get_infra_value "$ENV" ".managedIdentities.${TENANT}-dev-uami.name")
-    local uami_resource_id=$(get_infra_value "$ENV" ".managedIdentities.${TENANT}-dev-uami.id")
+    local uami_name=$(get_infra_value "$ENV" ".managedIdentities.${TENANT}.name")
+    local uami_resource_id=$(get_infra_value "$ENV" ".managedIdentities.${TENANT}.id")
+    
+    # Grant ACR pull access to managed identity
+    grant_acr_pull_access "$uami_name" "$ACR_NAME"
+    
+    # Grant KeyVault access if app needs database (app2)
+    if [ "$app_key" == "bmapp2" ]; then
+        local kv_name=$(get_tenant_value "$TENANT" "$ENV" ".keyVault.name")
+        grant_keyvault_access "$uami_name" "$kv_name"
+    fi
     
     log "Deploying BLOOM Container App: $app_name"
     log "Using Managed Identity: $uami_name"
@@ -197,19 +298,68 @@ main() {
     echo "================================================================================"
     log "DEPLOY BLOOM TENANT APPLICATIONS"
     echo "================================================================================"
+    log "Script: 06-deploy-bloom.sh"
     log "Purpose: Deploy BLOOM tenant apps (bmapp1, bmapp2) to Azure Container Apps"
-    log "Resource Group: $RESOURCE_GROUP"
-    log "Container App Environment: $CONTAINER_APP_ENV"
-    log "ACR Registry: $ACR_REGISTRY"
-    log "Tenant: $TENANT"
-    log "Environment: $ENV"
-    log "Tag: $TAG"
+    echo "-------------------------------------------------------------------------------"
+    log "Parameters:"
+    log "  Environment:               $ENV"
+    log "  Tenant:                    $TENANT"
+    log "  Image Tag:                 $TAG"
+    echo "-------------------------------------------------------------------------------"
+    log "Azure Resources:"
+    log "  Resource Group:            $RESOURCE_GROUP"
+    log "  Container App Environment: $CONTAINER_APP_ENV"
+    log "  ACR Registry:              $ACR_REGISTRY"
     echo "================================================================================"
     echo
     
     # Check prerequisites
     check_azure_login
     check_containerapp_extension
+    
+    # Check and setup KeyVault secrets if needed
+    log "Checking KeyVault secrets..."
+    local kv_name=$(get_infra_value "$ENV" ".keyVault.name")
+    local uami_name=$(get_infra_value "$ENV" ".managedIdentities.${TENANT}.name")
+    local secrets_missing=false
+    
+    if ! az keyvault secret show --vault-name "$kv_name" --name "${TENANT}-api-key" >/dev/null 2>&1; then
+        secrets_missing=true
+    fi
+    if ! az keyvault secret show --vault-name "$kv_name" --name "${TENANT}-psql-connection-string" >/dev/null 2>&1; then
+        secrets_missing=true
+    fi
+    
+    if [ "$secrets_missing" = true ]; then
+        log "Required KeyVault secrets not found, setting up sample secrets..."
+        
+        # Grant RBAC first
+        log "Granting KeyVault access to managed identity..."
+        grant_keyvault_access "$uami_name" "$kv_name"
+        
+        # Create secrets
+        if ! ENV="$ENV" "$MAIN_SCRIPT_DIR/helpers/setup-keyvault-secrets.sh"; then
+            error "Failed to setup KeyVault secrets, cannot proceed with deployment"
+            exit 1
+        fi
+        success "KeyVault secrets created successfully"
+        
+        # Wait for RBAC propagation
+        log "Waiting 15 seconds for RBAC propagation..."
+        sleep 15
+        
+        # Verify secrets are accessible
+        log "Verifying secrets are accessible..."
+        if ! az keyvault secret show --vault-name "$kv_name" --name "${TENANT}-api-key" >/dev/null 2>&1; then
+            error "Failed to verify secret access for ${TENANT}-api-key"
+            error "RBAC may not have propagated yet. Please wait a few minutes and try again."
+            exit 1
+        fi
+        success "Secrets verified and accessible"
+    else
+        success "KeyVault secrets already configured"
+    fi
+    echo
     
     # Define BLOOM applications
     declare -A bloom_apps=(
@@ -271,7 +421,8 @@ main() {
         
         exit 0
     else
-        error "Some BLOOM applications failed to deploy"
+        error "Failed to deploy some BLOOM applications"
+        error "Successful: $success_count/$total_count"
         
         log "Failed BLOOM applications:"
         for app_type in "${!bloom_apps[@]}"; do
@@ -281,6 +432,12 @@ main() {
             fi
         done
         
+        error "Please check the error messages above for details"
+        error "Common issues:"
+        error "  - Container App Environment not found: $CONTAINER_APP_ENV"
+        error "  - Insufficient permissions for managed identity"
+        error "  - Invalid image name or tag"
+        error "  - Network or ACR connectivity issues"
         exit 1
     fi
 }

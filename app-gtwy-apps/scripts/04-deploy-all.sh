@@ -103,7 +103,7 @@ deploy_container_app() {
     local root_path=$5
     
     # Get tenant-specific container app environment from infra config
-    local tenant_cae=$(jq -r ".containerAppEnvironments.${tenant}-dev-cae.name" "$INFRA_CONFIG")
+    local tenant_cae=$(jq -r ".containerAppEnvironments.${tenant}.name" "$INFRA_CONFIG")
     
     log "Deploying Container App: $app_name"
     log "Using Container App Environment: $tenant_cae"
@@ -175,12 +175,23 @@ main() {
     echo "================================================================================"
     log "DEPLOY ALL APPLICATIONS (ORCHESTRATOR)"
     echo "================================================================================"
+    log "Script: 04-deploy-all.sh"
     log "Purpose: Deploy all NBRLY and BLOOM tenant apps to Azure Container Apps"
     log "         Calls 05-deploy-nbrly.sh and 06-deploy-bloom.sh"
-    log "Environment: $ENV"
-    log "Resource Group: $RESOURCE_GROUP"
-    log "ACR Registry: $ACR_REGISTRY"
-    log "Tag: $TAG"
+    echo "-------------------------------------------------------------------------------"
+    log "Parameters:"
+    log "  Environment:      $ENV"
+    log "  Image Tag:        $TAG"
+    echo "-------------------------------------------------------------------------------"
+    log "Azure Resources:"
+    log "  Resource Group:   $RESOURCE_GROUP"
+    log "  ACR Registry:     $ACR_REGISTRY"
+    echo "-------------------------------------------------------------------------------"
+    log "Applications to Deploy:"
+    log "  - ca-nbrly-nbapp1-dev (nbrly-nbapp1:$TAG)"
+    log "  - ca-nbrly-nbapp2-dev (nbrly-nbapp2:$TAG)"
+    log "  - ca-bloom-bmapp1-dev (bloom-bmapp1:$TAG)"
+    log "  - ca-bloom-bmapp2-dev (bloom-bmapp2:$TAG)"
     echo "================================================================================"
     echo
     
@@ -238,7 +249,8 @@ main() {
         
         exit 0
     else
-        error "Some applications failed to deploy"
+        error "Failed to deploy some applications"
+        error "Successful: $success_count/$total_count"
         
         log "Failed applications:"
         for app_name in "${!apps[@]}"; do
@@ -247,6 +259,12 @@ main() {
             fi
         done
         
+        error "Please check the error messages above for details"
+        error "Common issues:"
+        error "  - Container App Environment not found"
+        error "  - Insufficient permissions"
+        error "  - Invalid image name or tag"
+        error "  - Network connectivity issues"
         exit 1
     fi
 }

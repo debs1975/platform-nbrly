@@ -20,6 +20,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 source "${SCRIPT_DIR}/helpers/logging.sh"
+source "${SCRIPT_DIR}/helpers/config-parser.sh"
+source "${SCRIPT_DIR}/helpers/azure-login.sh"
+
+# Setup logging
+setup_logging "tenant-infra" "$ENV"
 
 # Trap errors and print error message
 trap 'log_error "Script failed at line $LINENO with exit code $?"' ERR
@@ -48,6 +53,28 @@ if [[ ! "$ENV" =~ ^(dev|stage|prod)$ ]]; then
 fi
 
 log_info "Starting deployment for tenant: $TENANT_NAME, project: $PROJECT (Environment: $ENV)"
+
+# Login to Azure with environment-specific credentials
+azure_login "$ENV"
+
+# Set Azure subscription from infra file
+CONFIG_DIR="$SCRIPT_DIR/../config"
+INFRA_FILE="$CONFIG_DIR/infra-${ENV}.json"
+SUBSCRIPTION_ID=$(parse_config "$INFRA_FILE" ".subscription.id" 2>/dev/null || echo "")
+
+if [ -n "$SUBSCRIPTION_ID" ] && [ "$SUBSCRIPTION_ID" != "null" ]; then
+    log_info "Setting Azure subscription to: $SUBSCRIPTION_ID"
+    az account set --subscription "$SUBSCRIPTION_ID"
+else
+    log_warning "No subscription ID found in infra file. Using current subscription context."
+    CURRENT_SUBSCRIPTION=$(az account show --query "id" -o tsv 2>/dev/null || echo "")
+    if [ -n "$CURRENT_SUBSCRIPTION" ]; then
+        log_info "Current subscription: $CURRENT_SUBSCRIPTION"
+    else
+        log_error "No subscription context available. Please ensure you're logged in and have a valid subscription."
+        exit 1
+    fi
+fi
 
 log_info "Step 1: Deploying tenant resources..."
 "${SCRIPT_DIR}/03-deploy-tenant-resources.sh" "$TENANT_NAME" "$ENV"

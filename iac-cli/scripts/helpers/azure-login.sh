@@ -19,9 +19,12 @@ show_login_details() {
 
 # Function to log in to Azure
 azure_login() {
+  # Accept optional environment parameter, default to dev
+  local ENV="${1:-dev}"
+
   # Determine the path to the credentials file relative to this script's location.
   local HELPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
-  CRED_FILE_PATH="${HELPER_DIR}/../../creds/azure-credentials-dev.cred"
+  CRED_FILE_PATH="${HELPER_DIR}/../../creds/azure-credentials-${ENV}.cred"
 
   # Attempt Service Principal login if the credentials file exists
   if [ -f "$CRED_FILE_PATH" ]; then

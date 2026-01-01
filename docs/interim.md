@@ -100,3 +100,8 @@ az containerapp env http-route-config delete \
   --name nbrly-dev-cae
 
 nbrly-dev-cae.grayfield-aa4022a1.eastus.azurecontainerapps.io
+
+Key Vault Certificates Officer
+ - SPN
+ 
+Key Vault Secrets Officer 

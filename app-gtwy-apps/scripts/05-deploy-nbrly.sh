@@ -4,21 +4,24 @@
 # Deploys nbapp1 and nbapp2 with proper configuration
 #
 # USAGE:
-#   ./05-deploy-nbrly.sh [TAG]
+#   ./05-deploy-nbrly.sh [ENV] [TAG]
 #
 # PARAMETERS:
+#   ENV - Environment name (default: "dev")
+#         Example values: "dev", "stage", "prod"
 #   TAG - Docker image tag (default: "latest")
 #         Example values: "v1.0.0", "latest", "dev-20240115"
 #
 # EXAMPLES:
-#   ./05-deploy-nbrly.sh
-#   ./05-deploy-nbrly.sh v1.0.0
-#   ./05-deploy-nbrly.sh dev-$(date +%Y%m%d)
+#   ./05-deploy-nbrly.sh                     # Uses dev env, latest tag
+#   ./05-deploy-nbrly.sh dev                 # Uses dev env, latest tag
+#   ./05-deploy-nbrly.sh dev v1.0.0          # Uses dev env, v1.0.0 tag
+#   ./05-deploy-nbrly.sh stage v2.0.0        # Uses stage env, v2.0.0 tag
 #
 # PREREQUISITES:
 #   - Azure CLI logged in (az login)
 #   - Container images built and pushed to ACR
-#   - config/infra-dev.json configured
+#   - config/infra-${ENV}.json configured
 #   - Azure Container Apps environment exists
 #   - NBRLY tenant configuration in config/nbrly/
 #
@@ -35,9 +38,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/helpers/config-loader.sh"
 
 # Configuration
-ENV=${ENV:-"dev"}
+ENV=${1:-"dev"}
+TAG=${2:-"latest"}
 TENANT="nbrly"
-TAG=${1:-"latest"}
 
 # Load configuration values
 check_jq || exit 1
@@ -45,8 +48,8 @@ RESOURCE_GROUP=$(get_infra_value "$ENV" ".resourceGroup.name") # Loaded from inf
 ACR_NAME=$(get_infra_value "$ENV" ".containerRegistry.name") # Loaded from infra-dev.json
 ACR_REGISTRY="${ACR_NAME}.azurecr.io"
 
-# Get container app environment from infra config (tenant-specific)
-CONTAINER_APP_ENV=$(get_infra_value "$ENV" ".containerAppEnvironments.${TENANT}-dev-cae.name")
+# Get container app environment from tenant-specific config
+CONTAINER_APP_ENV=$(get_tenant_value "$TENANT" "$ENV" ".containerAppEnvironment.name")
 
 # Colors for output
 RED='\033[0;31m'
@@ -92,6 +95,95 @@ check_containerapp_extension() {
     success "Container Apps extension ready"
 }
 
+# Grant KeyVault RBAC permissions to managed identity
+grant_keyvault_access() {
+    local uami_name=$1
+    local kv_name=$2
+    
+    log "Granting KeyVault access to managed identity: $uami_name"
+    
+    # Get managed identity principal ID
+    local uami_principal_id=$(az identity show \
+        --name "$uami_name" \
+        --resource-group "$RESOURCE_GROUP" \
+        --query principalId -o tsv)
+    
+    if [ -z "$uami_principal_id" ]; then
+        error "Failed to get principal ID for managed identity: $uami_name"
+        return 1
+    fi
+    
+    # Get KeyVault resource ID
+    local kv_id=$(az keyvault show --name "$kv_name" --query id -o tsv)
+    
+    # Check if role assignment already exists
+    local existing_role=$(az role assignment list \
+        --assignee "$uami_principal_id" \
+        --scope "$kv_id" \
+        --role "Key Vault Secrets User" \
+        --query "[].id" -o tsv)
+    
+    if [ -n "$existing_role" ]; then
+        log "Role assignment already exists for $uami_name"
+    else
+        log "Creating 'Key Vault Secrets User' role assignment..."
+        az role assignment create \
+            --role "Key Vault Secrets User" \
+            --assignee-object-id "$uami_principal_id" \
+            --assignee-principal-type ServicePrincipal \
+            --scope "$kv_id" \
+            --output none 2>/dev/null || warning "Role assignment may already exist"
+        
+        success "✓ KeyVault access granted to $uami_name"
+    fi
+}
+
+# Grant ACR pull access to managed identity
+grant_acr_pull_access() {
+    local uami_name=$1
+    local acr_name=$2
+    
+    log "Granting ACR pull access to managed identity: $uami_name"
+    
+    # Get managed identity principal ID
+    local uami_principal_id=$(az identity show \
+        --name "$uami_name" \
+        --resource-group "$RESOURCE_GROUP" \
+        --query principalId -o tsv)
+    
+    if [ -z "$uami_principal_id" ]; then
+        error "Failed to get principal ID for managed identity: $uami_name"
+        return 1
+    fi
+    
+    # Get ACR resource ID
+    local acr_id=$(az acr show --name "$acr_name" --query id -o tsv)
+    
+    # Check if role assignment already exists
+    local existing_role=$(az role assignment list \
+        --assignee "$uami_principal_id" \
+        --scope "$acr_id" \
+        --role "AcrPull" \
+        --query "[].id" -o tsv)
+    
+    if [ -n "$existing_role" ]; then
+        log "AcrPull role assignment already exists for $uami_name"
+    else
+        log "Creating 'AcrPull' role assignment..."
+        az role assignment create \
+            --role "AcrPull" \
+            --assignee-object-id "$uami_principal_id" \
+            --assignee-principal-type ServicePrincipal \
+            --scope "$acr_id" \
+            --output none 2>/dev/null || warning "Role assignment may already exist"
+        
+        log "Waiting 15 seconds for RBAC propagation..."
+        sleep 15
+        
+        success "✓ ACR pull access granted to $uami_name"
+    fi
+}
+
 # Deploy NBRLY Container App
 deploy_nbrly_app() {
     local app_key=$1
@@ -105,9 +197,18 @@ deploy_nbrly_app() {
     local min_replicas=$(get_app_config "$TENANT" "$app_key" "$ENV" "minReplicas")
     local max_replicas=$(get_app_config "$TENANT" "$app_key" "$ENV" "maxReplicas")
     
-    # Get managed identity configuration from infra config
-    local uami_name=$(get_infra_value "$ENV" ".managedIdentities.${TENANT}-dev-uami.name")
-    local uami_resource_id=$(get_infra_value "$ENV" ".managedIdentities.${TENANT}-dev-uami.id")
+    # Get managed identity configuration from tenant-specific config
+    local uami_name=$(get_tenant_value "$TENANT" "$ENV" ".managedIdentity.name")
+    local uami_resource_id=$(get_tenant_value "$TENANT" "$ENV" ".managedIdentity.id")
+    
+    # Grant ACR pull access to managed identity
+    grant_acr_pull_access "$uami_name" "$ACR_NAME"
+    
+    # Grant KeyVault access if app needs database (app2)
+    if [ "$app_key" == "nbapp2" ]; then
+        local kv_name=$(get_tenant_value "$TENANT" "$ENV" ".keyVault.name")
+        grant_keyvault_access "$uami_name" "$kv_name"
+    fi
     
     log "Deploying NBRLY Container App: $app_name"
     log "  - Image: $image_repo:$TAG"
@@ -145,8 +246,9 @@ deploy_nbrly_app() {
             --registry-server "$ACR_REGISTRY" \
             --registry-identity "$uami_resource_id" \
             --user-assigned "$uami_resource_id" \
+            --transport http \
             --target-port 8000 \
-            --ingress internal \
+            --ingress external \
             --min-replicas "$min_replicas" \
             --max-replicas "$max_replicas" \
             --cpu "$cpu" \
@@ -161,7 +263,7 @@ deploy_nbrly_app() {
         # Enable Key Vault secrets if needed (for database connections)
         if [ "$app_key" == "nbapp2" ] || [ "$app_key" == "bmapp2" ]; then
             log "Configuring Key Vault secret reference for database connection..."
-            local kv_name=$(get_infra_value "$ENV" ".keyVault.name")
+            local kv_name=$(get_tenant_value "$TENANT" "$ENV" ".keyVault.name")
             local db_secret="${TENANT}-psql-connection-string"
             
             # Add secret reference
@@ -200,13 +302,18 @@ main() {
     echo "================================================================================"
     log "DEPLOY NBRLY TENANT APPLICATIONS"
     echo "================================================================================"
+    log "Script: 05-deploy-nbrly.sh"
     log "Purpose: Deploy NBRLY tenant apps (nbapp1, nbapp2) to Azure Container Apps"
-    log "Resource Group: $RESOURCE_GROUP"
-    log "Container App Environment: $CONTAINER_APP_ENV"
-    log "ACR Registry: $ACR_REGISTRY"
-    log "Tenant: $TENANT"
-    log "Environment: $ENV"
-    log "Tag: $TAG"
+    echo "-------------------------------------------------------------------------------"
+    log "Parameters:"
+    log "  Environment:               $ENV"
+    log "  Tenant:                    $TENANT"
+    log "  Image Tag:                 $TAG"
+    echo "-------------------------------------------------------------------------------"
+    log "Azure Resources:"
+    log "  Resource Group:            $RESOURCE_GROUP"
+    log "  Container App Environment: $CONTAINER_APP_ENV"
+    log "  ACR Registry:              $ACR_REGISTRY"
     echo "================================================================================"
     echo
     
@@ -214,29 +321,69 @@ main() {
     check_azure_login
     check_containerapp_extension
     
+    # Check and setup KeyVault secrets if needed
+    log "Checking KeyVault secrets..."
+    local kv_name=$(get_tenant_value "$TENANT" "$ENV" ".keyVault.name")
+    local uami_name=$(get_tenant_value "$TENANT" "$ENV" ".managedIdentity.name")
+    local secrets_missing=false
+    
+    if ! az keyvault secret show --vault-name "$kv_name" --name "${TENANT}-api-key" >/dev/null 2>&1; then
+        secrets_missing=true
+    fi
+    if ! az keyvault secret show --vault-name "$kv_name" --name "${TENANT}-psql-connection-string" >/dev/null 2>&1; then
+        secrets_missing=true
+    fi
+    
+    if [ "$secrets_missing" = true ]; then
+        log "Required KeyVault secrets not found, setting up sample secrets..."
+        
+        # Grant RBAC first
+        log "Granting KeyVault access to managed identity..."
+        grant_keyvault_access "$uami_name" "$kv_name"
+        
+        # Create secrets
+        if ! ENV="$ENV" TENANT="$TENANT" "$SCRIPT_DIR/helpers/setup-keyvault-secrets.sh"; then
+            error "Failed to setup KeyVault secrets, cannot proceed with deployment"
+            exit 1
+        fi
+        success "KeyVault secrets created successfully"
+        
+        # Wait for RBAC propagation
+        log "Waiting 15 seconds for RBAC propagation..."
+        sleep 15
+        
+        # Verify secrets are accessible
+        log "Verifying secrets are accessible..."
+        if ! az keyvault secret show --vault-name "$kv_name" --name "${TENANT}-api-key" >/dev/null 2>&1; then
+            error "Failed to verify secret access for ${TENANT}-api-key"
+            error "RBAC may not have propagated yet. Please wait a few minutes and try again."
+            exit 1
+        fi
+        success "Secrets verified and accessible"
+    else
+        success "KeyVault secrets already configured"
+    fi
+    echo
+    
     # Define NBRLY applications
-    declare -A nbrly_apps=(
-        ["nbapp1"]="/app1"
-        ["nbapp2"]="/app2"
-    )
+    local nbrly_apps=("nbapp1" "nbapp2")
     
     # Deploy each NBRLY application
     local success_count=0
     local total_count=${#nbrly_apps[@]}
-    declare -A app_fqdns
+    local app_fqdns=()
     
-    for app_type in "${!nbrly_apps[@]}"; do
-        local root_path="${nbrly_apps[$app_type]}"
-        local app_name="ca-$TENANT-${app_type}-dev"
+    for app_type in "${nbrly_apps[@]}"; do
+        local app_name="ca-$TENANT-${app_type}-$ENV"
         
         log "Processing NBRLY application: $app_type"
         
-        if deploy_nbrly_app "$app_type" "$root_path"; then
+        if deploy_nbrly_app "$app_type"; then
             ((success_count++))
-            app_fqdns["$app_name"]=$(get_app_fqdn "$app_name")
+            app_fqdns+=("$(get_app_fqdn "$app_name")")
         else
             warning "Failed to deploy NBRLY application: $app_type"
-            app_fqdns["$app_name"]="FAILED"
+            app_fqdns+=("FAILED")
         fi
         
         echo # Empty line for readability
@@ -250,19 +397,22 @@ main() {
         success "All NBRLY applications deployed successfully!"
         
         log "NBRLY Container Apps deployed:"
-        for app_type in "${!nbrly_apps[@]}"; do
-            local app_name="ca-$TENANT-${app_type}-dev"
-            echo "  - $app_name: https://${app_fqdns[$app_name]}"
+        for i in "${!nbrly_apps[@]}"; do
+            local app_type="${nbrly_apps[$i]}"
+            local app_name="ca-$TENANT-${app_type}-$ENV"
+            echo "  - $app_name: https://${app_fqdns[$i]}"
         done
         
         log ""
         log "Health check endpoints:"
-        for app_type in "${!nbrly_apps[@]}"; do
-            local app_name="ca-$TENANT-${app_type}-dev"
-            local fqdn="${app_fqdns[$app_name]}"
+        for i in "${!nbrly_apps[@]}"; do
+            local app_type="${nbrly_apps[$i]}"
+            local app_name="ca-$TENANT-${app_type}-$ENV"
+            local fqdn="${app_fqdns[$i]}"
+            local root_path=$(get_app_config "$TENANT" "$app_type" "$ENV" "rootPath")
             if [ "$fqdn" != "FAILED" ] && [ "$fqdn" != "N/A" ]; then
                 echo "  - $app_name health: https://$fqdn/health"
-                echo "  - $app_name docs: https://$fqdn${nbrly_apps[$app_type]}/docs"
+                echo "  - $app_name docs: https://$fqdn${root_path}/docs"
             fi
         done
         
@@ -274,16 +424,24 @@ main() {
         
         exit 0
     else
-        error "Some NBRLY applications failed to deploy"
+        error "Failed to deploy some NBRLY applications"
+        error "Successful: $success_count/$total_count"
         
         log "Failed NBRLY applications:"
-        for app_type in "${!nbrly_apps[@]}"; do
-            local app_name="ca-$TENANT-${app_type}-dev"
-            if [ "${app_fqdns[$app_name]}" == "FAILED" ]; then
+        for i in "${!nbrly_apps[@]}"; do
+            local app_type="${nbrly_apps[$i]}"
+            local app_name="ca-$TENANT-${app_type}-$ENV"
+            if [ "${app_fqdns[$i]}" == "FAILED" ]; then
                 echo "  - $app_name ($app_type)"
             fi
         done
         
+        error "Please check the error messages above for details"
+        error "Common issues:"
+        error "  - Container App Environment not found: $CONTAINER_APP_ENV"
+        error "  - Insufficient permissions for managed identity"
+        error "  - Invalid image name or tag"
+        error "  - Network or ACR connectivity issues"
         exit 1
     fi
 }
@@ -303,8 +461,8 @@ show_help() {
     echo "  $0 nbrly-dev    # Deploy with 'nbrly-dev' tag"
     echo
     echo "NBRLY Applications deployed:"
-    echo "  - ca-nbrly-nbapp1-dev (nbrly-nbapp1:TAG) - root_path: /app1"
-    echo "  - ca-nbrly-nbapp2-dev (nbrly-nbapp2:TAG) - root_path: /app2"
+    echo "  - ca-nbrly-nbapp1-$ENV (nbrly-nbapp1:TAG) - root_path: /app1"
+    echo "  - ca-nbrly-nbapp2-$ENV (nbrly-nbapp2:TAG) - root_path: /app2"
     echo
     echo "Prerequisites:"
     echo "  - Azure CLI logged in (az login)"

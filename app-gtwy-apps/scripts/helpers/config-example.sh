@@ -37,10 +37,10 @@ main() {
     
     # Load global configuration values
     log "Reading global configuration..."
-    RESOURCE_GROUP=$(get_infra_value "$ENV" ".resources.resourceGroup.name")
-    REGION=$(get_global_value "$ENV" ".region")
-    ACR_NAME=$(get_infra_value "$ENV" ".resources.containerRegistry.name")
-    AGW_NAME=$(get_infra_value "$ENV" ".resources.applicationGateway.name")
+    RESOURCE_GROUP=$(get_infra_value "$ENV" ".resourceGroup.name")
+    REGION=$(get_infra_value "$ENV" ".location")
+    ACR_NAME=$(get_infra_value "$ENV" ".containerRegistry.name")
+    AGW_NAME=$(get_infra_value "$ENV" ".applicationGateway.name")
     
     echo "Global Configuration:"
     echo "  Resource Group: $RESOURCE_GROUP"
@@ -51,7 +51,7 @@ main() {
     
     # Load tenant configuration values
     log "Reading tenant configuration for: $TENANT"
-    TENANT_DOMAIN=$(get_infra_value "$ENV" ".resources.tenants.$TENANT.hostName") # Domain from infra config
+    TENANT_DOMAIN=$(get_tenant_value "$TENANT" "$ENV" ".domain") # Domain from tenant config
     CAE_NAME=$(get_tenant_value "$TENANT" "$ENV" ".containerAppEnvironment")
     CAE_SUBNET=$(get_tenant_value "$TENANT" "$ENV" ".caeSubnetPrefix")
     

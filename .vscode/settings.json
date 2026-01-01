@@ -5,5 +5,36 @@
         ".github/instructions/deployment-guide.md",
         ".github/instructions/azure-ca-appgtwy-imp-plan.md",
         ".github/instructions/iac-naming-convention.instructions.md"
-    ]
+    ],
+    "files.watcherExclude": {
+        "**/.git/objects/**": true,
+        "**/.git/subtree-cache/**": true,
+        "**/node_modules/**": true,
+        "**/.pytest_cache/**": true,
+        "**/__pycache__/**": true,
+        "**/.*": true,
+        "logs/**": true,
+        "creds/**": true
+    },
+    "files.maxMemoryForLargeFilesMB": 4096,
+    "extensions.ignoreRecommendations": true,
+    "search.exclude": {
+        "**/.git": true,
+        "**/node_modules": true,
+        "logs": true,
+        "creds": true,
+        "**/.pytest_cache": true,
+        "**/__pycache__": true
+    },
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/.pytest_cache": true,
+        "**/.git": true
+    },
+    "python.analysis.extraPaths": [],
+    "telemetry.telemetryLevel": "off",
+    "[json]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    }
 }

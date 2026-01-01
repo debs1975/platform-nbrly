@@ -4,21 +4,24 @@
 # Builds Docker images for bmapp1 and bmapp2 and pushes to Azure Container Registry
 #
 # USAGE:
-#   ./03-build-push-bloom.sh [TAG]
+#   ./03-build-push-bloom.sh [ENV] [TAG]
 #
 # PARAMETERS:
+#   ENV - Environment name (default: "dev")
+#         Example values: "dev", "stage", "prod"
 #   TAG - Docker image tag (default: "latest")
 #         Example values: "v1.0.0", "latest", "dev-20240115"
 #
 # EXAMPLES:
-#   ./03-build-push-bloom.sh
-#   ./03-build-push-bloom.sh v1.0.0
-#   ./03-build-push-bloom.sh dev-$(date +%Y%m%d)
+#   ./03-build-push-bloom.sh                 # Uses dev env, latest tag
+#   ./03-build-push-bloom.sh dev             # Uses dev env, latest tag
+#   ./03-build-push-bloom.sh dev v1.0.0      # Uses dev env, v1.0.0 tag
+#   ./03-build-push-bloom.sh stage v2.0.0    # Uses stage env, v2.0.0 tag
 #
 # PREREQUISITES:
 #   - Azure CLI logged in (az login)
 #   - Docker daemon running
-#   - config/infra-dev.json configured with ACR settings
+#   - config/infra-${ENV}.json configured with ACR settings
 #   - BLOOM application source code in ../bloom/bmapp1 and ../bloom/bmapp2
 #
 # BUILDS:
@@ -33,9 +36,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/helpers/config-loader.sh"
 
 # Configuration
-ENV=${ENV:-"dev"}
+ENV=${1:-"dev"}
+TAG=${2:-"latest"}
 TENANT="bloom"
-TAG=${1:-"latest"}
 
 # Load configuration values
 check_jq || exit 1
@@ -139,11 +142,16 @@ main() {
     echo "================================================================================"
     log "BUILD AND PUSH BLOOM TENANT APPLICATIONS"
     echo "================================================================================"
+    log "Script: 03-build-push-bloom.sh"
     log "Purpose: Build and push BLOOM tenant container images (bmapp1, bmapp2) to ACR"
-    log "ACR Registry: $ACR_REGISTRY"
-    log "Tenant: $TENANT"
-    log "Environment: $ENV"
-    log "Tag: $TAG"
+    echo "-------------------------------------------------------------------------------"
+    log "Parameters:"
+    log "  Environment:      $ENV"
+    log "  Tenant:           $TENANT"
+    log "  Image Tag:        $TAG"
+    echo "-------------------------------------------------------------------------------"
+    log "Azure Resources:"
+    log "  ACR Registry:     $ACR_REGISTRY"
     echo "================================================================================"
     echo
     
@@ -189,7 +197,14 @@ main() {
         
         exit 0
     else
-        error "Some BLOOM applications failed to build/push"
+        error "Failed to build and push some BLOOM applications"
+        error "Successful: $success_count/$total_count"
+        error "Please check the error messages above for details"
+        error "Common issues:"
+        error "  - Docker daemon not running"
+        error "  - Insufficient ACR permissions"
+        error "  - Network connectivity issues"
+        error "  - Invalid Dockerfile or build context"
         exit 1
     fi
 }
