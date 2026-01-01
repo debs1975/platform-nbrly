@@ -538,3 +538,6 @@ Thumbs.db
 *.cred
 *.cred.backup*
 spn.sh
+*.cred.disable
+*.cred.noniac
+/Users/debashisghosh/Documents/dev/nbrly/iac-cli/creds/azure-credentials-dev.cred.disable
